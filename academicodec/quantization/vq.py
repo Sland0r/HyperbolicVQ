@@ -46,7 +46,9 @@ class ResidualVectorQuantizer(nn.Module):
             decay: float=0.99,
             kmeans_init: bool=True,
             kmeans_iters: int=50,
-            threshold_ema_dead_code: int=2, ):
+            threshold_ema_dead_code: int=2, 
+            c: float=0.0,
+            ):
         super().__init__()
         self.n_q = n_q
         self.dimension = dimension
@@ -55,6 +57,7 @@ class ResidualVectorQuantizer(nn.Module):
         self.kmeans_init = kmeans_init
         self.kmeans_iters = kmeans_iters
         self.threshold_ema_dead_code = threshold_ema_dead_code
+        self.c = c
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_size=self.bins,
@@ -62,7 +65,8 @@ class ResidualVectorQuantizer(nn.Module):
             decay=self.decay,
             kmeans_init=self.kmeans_init,
             kmeans_iters=self.kmeans_iters,
-            threshold_ema_dead_code=self.threshold_ema_dead_code, )
+            threshold_ema_dead_code=self.threshold_ema_dead_code,
+            c=self.c)
 
     def forward(self,
                 x: torch.Tensor,

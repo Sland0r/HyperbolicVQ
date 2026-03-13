@@ -25,4 +25,5 @@ python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --sr 24000 \
         --ratios 6 5 4 2 \
         --target_bandwidths 1 2 4 8 12 \
-        --print_freq 1000 
+        --print_freq 1000 \
+        --c 1.0

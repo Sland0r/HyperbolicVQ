@@ -67,17 +67,27 @@ def pairwise_hyperbolic_distance_sq(x, y, c):
     dist = (1 / (c ** 0.5)) * torch.acosh(arg.clamp_min(1.0 + 1e-5))
     return dist.pow(2)
 
-def exp_map(x, c):
-    norm = x.norm(dim=-1, keepdim=True)
+def exp_map0(v, c):
+    norm = v.norm(dim=-1, keepdim=True)
     sqrt_c = c ** 0.5
     scale = torch.tanh(sqrt_c * norm) / (sqrt_c * norm.clamp_min(1e-15))
-    return x * scale
+    return v * scale
 
-def log_map(y, c):
+def log_map0(y, c):
     norm = y.norm(dim=-1, keepdim=True)
     sqrt_c = c ** 0.5
     scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-15))
     return y * scale
+
+def exp_map(x, v, c):
+    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
+    lambda_x = 2 / (1 - c * x2)
+    return mobius_add(x, exp_map0(lambda_x * v / 2, c), c)
+
+def log_map(x, y, c):
+    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
+    lambda_x = 2 / (1 - c * x2)
+    return log_map0(mobius_add(-x, y, c), c) * 2 / lambda_x
 
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
@@ -263,14 +273,39 @@ class EuclideanCodebook(nn.Module):
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
             self.expire_codes_(x)
-            ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
-            embed_sum = x.t() @ embed_onehot
-            ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
-            cluster_size = (
-                laplace_smoothing(self.cluster_size, self.codebook_size,
-                                  self.epsilon) * self.cluster_size.sum())
-            embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
-            self.embed.data.copy_(embed_normalized)
+            
+            if self.c > 0:
+                ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
+                # Compute smoothed denominator for EMA
+                cluster_size = (
+                    laplace_smoothing(self.cluster_size, self.codebook_size,
+                                      self.epsilon) * self.cluster_size.sum())
+                                      
+                # Map x to the tangent space of their assigned centroids
+                embed_ind_flat = embed_ind.view(-1)
+                embedded = self.embed[embed_ind_flat] # Contextual centroids per batch item
+                tangent_x = log_map(embedded, x, self.c)
+                
+                # Sum the tangent vectors per centroid
+                tangent_sum = torch.zeros_like(self.embed)
+                tangent_sum.scatter_add_(0, repeat(embed_ind_flat, "n -> n d", d=self.embed.size(-1)), tangent_x)
+                
+                # The effective step size is scaled by (1 - decay) and averaged by the smoothed cluster size
+                step = (1 - self.decay) * (tangent_sum / cluster_size.unsqueeze(1))
+                
+                # Move the active centroids along the geodesic by the step amount
+                embed_normalized = exp_map(self.embed, step, self.c)
+                self.embed.data.copy_(embed_normalized)
+
+            else:
+                ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
+                embed_sum = x.t() @ embed_onehot
+                ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
+                cluster_size = (
+                    laplace_smoothing(self.cluster_size, self.codebook_size,
+                                      self.epsilon) * self.cluster_size.sum())
+                embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
+                self.embed.data.copy_(embed_normalized)
 
         return quantize, embed_ind
 
@@ -386,7 +421,7 @@ class ResidualVectorQuantization(nn.Module):
 
     def forward(self, x, n_q: tp.Optional[int]=None):
         if self.c > 0:
-            residual = exp_map(x, self.c)
+            residual = exp_map0(x, self.c)
             quantized_out = torch.zeros_like(residual)
         else:
             residual = x
@@ -410,7 +445,7 @@ class ResidualVectorQuantization(nn.Module):
             all_losses.append(loss)
 
         if self.c > 0:
-            quantized_out = log_map(quantized_out, self.c)
+            quantized_out = log_map0(quantized_out, self.c)
 
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
         return quantized_out, out_indices, out_losses
@@ -420,7 +455,7 @@ class ResidualVectorQuantization(nn.Module):
                n_q: tp.Optional[int]=None,
                st: tp.Optional[int]=None) -> torch.Tensor:
         if self.c > 0:
-            residual = exp_map(x, self.c)
+            residual = exp_map0(x, self.c)
         else:
             residual = x
         all_indices = []
@@ -456,6 +491,6 @@ class ResidualVectorQuantization(nn.Module):
                 quantized_out = quantized_out + quantized
         
         if self.c > 0:
-            quantized_out = log_map(quantized_out, self.c)
+            quantized_out = log_map0(quantized_out, self.c)
             
         return quantized_out

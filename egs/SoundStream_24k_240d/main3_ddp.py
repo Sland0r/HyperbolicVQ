@@ -147,6 +147,8 @@ def get_args():
     parser.add_argument(
         '--resume_path', type=str, default='path_to_resume', help='resume_path')
     parser.add_argument(
+        '--c', type=float, default=0.0, help='hyper-parameter for hyperbolic space')
+    parser.add_argument(
         '--ratios',
         type=int,
         nargs='+',
@@ -203,7 +205,7 @@ def main_worker(local_rank, args):
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios)
+    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -396,14 +398,33 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             valid_adv_g_loss = 0.0
             valid_feat_loss = 0.0
             valid_rec_loss = 0.0
+            
+            # For tracking perplexity / usage of codebooks
+            codes_hist = None
+            total_valid_codes = 0
+            
             if args.distributed:
                 valid_loader.sampler.set_epoch(epoch)
             for x in tqdm(valid_loader):
                 x = x.to(args.device)
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)
-                    G_x, commit_loss, _ = soundstream(x_wav)
+                    # G_x is the reconstructed waveform, codes is the indices
                     if optimizer_idx == 0:
+                        G_x, commit_loss, last_layer, codes = soundstream(x_wav)
+                        # Tracking Codebook Perplexity
+                        # codes shape: [batch, num_quantizers, time]
+                        if codes_hist is None:
+                            num_q = codes.shape[1]
+                            codebook_size = soundstream.quantizer.bins # e.g. 1024
+                            codes_hist = torch.zeros(num_q, codebook_size, device=args.device, dtype=torch.float64)
+                        
+                        # Flatten across batch and time for each quantizer separately
+                        for q_idx in range(codes.shape[1]):
+                            codes_q = codes[:, q_idx, :].flatten()
+                            codes_hist[q_idx].scatter_add_(0, codes_q, torch.ones_like(codes_q, dtype=torch.float64))
+                        total_valid_codes += codes.shape[0] * codes.shape[2]
+
                         valid_commit_loss += commit_loss
                         y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
                         y_disc_gen, fmap_gen = stft_disc(G_x.contiguous())
@@ -434,6 +455,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                         valid_feat_loss += feat_loss.item()
                         valid_rec_loss += rec_loss.item()
                     else:
+                        G_x, _, _, _ = soundstream(x_wav)
                         y_disc_r_det, fmap_r_det = stft_disc(
                             x_wav.contiguous().detach())
                         y_disc_gen_det, fmap_gen_det = stft_disc(
@@ -450,6 +472,21 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                                              fmap_f_g, y_ds_hat_r, y_ds_hat_g,
                                              fmap_s_r, fmap_s_g)
                         valid_loss_d += loss_d.item()
+                        
+            # Calculate perplexity: 2^{H(p)}
+            perplexities = []
+            if codes_hist is not None and total_valid_codes > 0:
+                # Distribute stats across nodes if distributed
+                if args.distributed:
+                    dist.all_reduce(codes_hist, op=dist.ReduceOp.SUM)
+                    total_valid_codes_tensor = torch.tensor([total_valid_codes], device=args.device, dtype=torch.float64)
+                    dist.all_reduce(total_valid_codes_tensor, op=dist.ReduceOp.SUM)
+                    total_valid_codes = total_valid_codes_tensor.item()
+                    
+                probs = codes_hist / codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+                perplexities = torch.exp2(entropy).tolist()
+
             if not args.distributed or dist.get_rank() == 0:
                 best_model = soundstream.state_dict().copy()
                 latest_model_soundstream = soundstream.state_dict().copy()
@@ -472,13 +509,15 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 latest_save['lr_scheduler_g'] = lr_scheduler_g.state_dict()
                 latest_save['lr_scheduler_d'] = lr_scheduler_d.state_dict()
                 torch.save(latest_save, args.PATH + '/latest.pth')
+                
+            ppl_str = ", ".join([f"{p:.1f}" for p in perplexities]) if perplexities else "N/A"
 
-            message = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, adversarial_loss_valid:{:.4f}, feature_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, valid_loss_d:{:.4f}, best_epoch:{:d}>'.format(
+            message = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, adversarial_loss_valid:{:.4f}, feature_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, valid_loss_d:{:.4f}, ppl:[{}], best_epoch:{:d}>'.format(
                 epoch, valid_loss_g / len(valid_loader), valid_rec_loss /
                 len(valid_loader), valid_adv_g_loss / len(valid_loader),
                 valid_feat_loss / len(valid_loader),
                 valid_commit_loss / len(valid_loader),
-                valid_loss_d / len(valid_loader), best_val_epoch)
+                valid_loss_d / len(valid_loader), ppl_str, best_val_epoch)
             logger.log_info(message)
 
 
