@@ -40,6 +40,46 @@ from torch import nn
 from academicodec.quantization.distrib import broadcast_tensors
 
 
+def mobius_add(x, y, c):
+    x2 = x.pow(2).sum(dim=-1, keepdim=True)
+    y2 = y.pow(2).sum(dim=-1, keepdim=True)
+    xy = (x * y).sum(dim=-1, keepdim=True)
+    num = (1 + 2 * c * xy + c * y2) * x + (1 - c * x2) * y
+    denom = 1 + 2 * c * xy + c ** 2 * x2 * y2
+    return num / denom.clamp_min(1e-15)
+
+def hyperbolic_distance_sq(x, y, c):
+    m_add = mobius_add(-x, y, c)
+    norm = m_add.norm(dim=-1, keepdim=True)
+    sqrt_c = c ** 0.5
+    arg = (sqrt_c * norm).clamp_max(1 - 1e-5)
+    dist = (2 / sqrt_c) * torch.atanh(arg)
+    return dist.pow(2)
+
+def pairwise_hyperbolic_distance_sq(x, y, c):
+    x2 = x.pow(2).sum(dim=-1, keepdim=True)
+    y2 = y.pow(2).sum(dim=-1, keepdim=True)
+    xy = x @ y.t()
+    sq_dist = x2 + y2.t() - 2 * xy
+    denom = (1 - c * x2) @ (1 - c * y2).t()
+    denom = denom.clamp_min(1e-15)
+    arg = 1 + 2 * c * sq_dist / denom
+    dist = (1 / (c ** 0.5)) * torch.acosh(arg.clamp_min(1.0 + 1e-5))
+    return dist.pow(2)
+
+def exp_map(x, c):
+    norm = x.norm(dim=-1, keepdim=True)
+    sqrt_c = c ** 0.5
+    scale = torch.tanh(sqrt_c * norm) / (sqrt_c * norm.clamp_min(1e-15))
+    return x * scale
+
+def log_map(y, c):
+    norm = y.norm(dim=-1, keepdim=True)
+    sqrt_c = c ** 0.5
+    scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-15))
+    return y * scale
+
+
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     return val if val is not None else d
 
@@ -69,15 +109,18 @@ def sample_vectors(samples, num: int):
     return samples[indices]
 
 
-def kmeans(samples, num_clusters: int, num_iters: int=10):
+def kmeans(samples, num_clusters: int, num_iters: int=10, c: float=0.):
     dim, dtype = samples.shape[-1], samples.dtype
 
     means = sample_vectors(samples, num_clusters)
 
     for _ in range(num_iters):
-        diffs = rearrange(samples, "n d -> n () d") - rearrange(means,
-                                                                "c d -> () c d")
-        dists = -(diffs**2).sum(dim=-1)
+        if c > 0:
+            dists = -pairwise_hyperbolic_distance_sq(samples, means, c)
+        else:
+            diffs = rearrange(samples, "n d -> n () d") - rearrange(means,
+                                                                    "c d -> () c d")
+            dists = -(diffs**2).sum(dim=-1)
 
         buckets = dists.max(dim=-1).indices
         bins = torch.bincount(buckets, minlength=num_clusters)
@@ -117,8 +160,10 @@ class EuclideanCodebook(nn.Module):
             kmeans_iters: int=10,
             decay: float=0.99,
             epsilon: float=1e-5,
-            threshold_ema_dead_code: int=2, ):
+            threshold_ema_dead_code: int=2,
+            c: float=0., ):
         super().__init__()
+        self.c = c
         self.decay = decay
         init_fn: tp.Union[
             tp.Callable[..., torch.Tensor],
@@ -142,7 +187,7 @@ class EuclideanCodebook(nn.Module):
             return
 
         embed, cluster_size = kmeans(data, self.codebook_size,
-                                     self.kmeans_iters)
+                                     self.kmeans_iters, self.c)
         self.embed.data.copy_(embed)
         self.embed_avg.data.copy_(embed.clone())
         self.cluster_size.data.copy_(cluster_size)
@@ -173,9 +218,12 @@ class EuclideanCodebook(nn.Module):
         return x
 
     def quantize(self, x):
-        embed = self.embed.t()
-        dist = -(x.pow(2).sum(1, keepdim=True) - 2 * x @ embed +
-                 embed.pow(2).sum(0, keepdim=True))
+        if self.c > 0:
+            dist = -pairwise_hyperbolic_distance_sq(x, self.embed, self.c)
+        else:
+            embed = self.embed.t()
+            dist = -(x.pow(2).sum(1, keepdim=True) - 2 * x @ embed +
+                     embed.pow(2).sum(0, keepdim=True))
         embed_ind = dist.max(dim=-1).indices
         return embed_ind
 
@@ -254,8 +302,10 @@ class VectorQuantization(nn.Module):
             kmeans_init: bool=True,
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2,
-            commitment_weight: float=1., ):
+            commitment_weight: float=1.,
+            c: float=0., ):
         super().__init__()
+        self.c = c
         _codebook_dim: int = default(codebook_dim, dim)
 
         requires_projection = _codebook_dim != dim
@@ -274,7 +324,8 @@ class VectorQuantization(nn.Module):
             kmeans_iters=kmeans_iters,
             decay=decay,
             epsilon=epsilon,
-            threshold_ema_dead_code=threshold_ema_dead_code)
+            threshold_ema_dead_code=threshold_ema_dead_code,
+            c=c)
         self.codebook_size = codebook_size
 
     @property
@@ -301,13 +352,20 @@ class VectorQuantization(nn.Module):
         quantize, embed_ind = self._codebook(x)
 
         if self.training:
-            quantize = x + (quantize - x).detach()
+            if self.c > 0:
+                diff = mobius_add(-x, quantize, self.c)
+                quantize = mobius_add(x, diff.detach(), self.c)
+            else:
+                quantize = x + (quantize - x).detach()
 
         loss = torch.tensor([0.0], device=device, requires_grad=self.training)
 
         if self.training:
             if self.commitment_weight > 0:
-                commit_loss = F.mse_loss(quantize.detach(), x)
+                if self.c > 0:
+                    commit_loss = hyperbolic_distance_sq(quantize.detach(), x, self.c).mean()
+                else:
+                    commit_loss = F.mse_loss(quantize.detach(), x)
                 loss = loss + commit_loss * self.commitment_weight
 
         quantize = self.project_out(quantize)
@@ -322,12 +380,17 @@ class ResidualVectorQuantization(nn.Module):
 
     def __init__(self, *, num_quantizers, **kwargs):
         super().__init__()
+        self.c = kwargs.get("c", 0.0)
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
 
     def forward(self, x, n_q: tp.Optional[int]=None):
-        quantized_out = 0.0
-        residual = x
+        if self.c > 0:
+            residual = exp_map(x, self.c)
+            quantized_out = torch.zeros_like(residual)
+        else:
+            residual = x
+            quantized_out = 0.0
 
         all_losses = []
         all_indices = []
@@ -336,11 +399,18 @@ class ResidualVectorQuantization(nn.Module):
 
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
-            residual = residual - quantized
-            quantized_out = quantized_out + quantized
+            if self.c > 0:
+                residual = mobius_add(residual, -quantized, self.c)
+                quantized_out = mobius_add(quantized_out, quantized, self.c)
+            else:
+                residual = residual - quantized
+                quantized_out = quantized_out + quantized
 
             all_indices.append(indices)
             all_losses.append(loss)
+
+        if self.c > 0:
+            quantized_out = log_map(quantized_out, self.c)
 
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
         return quantized_out, out_indices, out_losses
@@ -349,22 +419,43 @@ class ResidualVectorQuantization(nn.Module):
                x: torch.Tensor,
                n_q: tp.Optional[int]=None,
                st: tp.Optional[int]=None) -> torch.Tensor:
-        residual = x
+        if self.c > 0:
+            residual = exp_map(x, self.c)
+        else:
+            residual = x
         all_indices = []
         n_q = n_q or len(self.layers)
         st = st or 0
         for layer in self.layers[st:n_q]:  # 设置解码的起止layer
             indices = layer.encode(residual)
             quantized = layer.decode(indices)
-            residual = residual - quantized
+            if self.c > 0:
+                residual = mobius_add(residual, -quantized, self.c)
+            else:
+                residual = residual - quantized
             all_indices.append(indices)
         out_indices = torch.stack(all_indices)
         return out_indices
 
     def decode(self, q_indices: torch.Tensor) -> torch.Tensor:
         quantized_out = torch.tensor(0.0, device=q_indices.device)
+        if self.c > 0:
+            quantized_out = torch.zeros((q_indices.shape[1], q_indices.shape[2], self.layers[0].project_out.out_features), device=q_indices.device) # placeholder layout, may need permuting based on real dims or initialized to actual 0 tensor of correct shape. `quantized = layer.decode(indices)` returns the output shape. Let's initialize `quantized_out` to scalar 0.0 or a typed 0 tensor later if c > 0 depending on the first iteration.
+
+        first = True
         for i, indices in enumerate(q_indices):
             layer = self.layers[i]
             quantized = layer.decode(indices)
-            quantized_out = quantized_out + quantized
+            if first and self.c > 0:
+                quantized_out = torch.zeros_like(quantized)
+            first = False
+
+            if self.c > 0:
+                quantized_out = mobius_add(quantized_out, quantized, self.c)
+            else:
+                quantized_out = quantized_out + quantized
+        
+        if self.c > 0:
+            quantized_out = log_map(quantized_out, self.c)
+            
         return quantized_out
