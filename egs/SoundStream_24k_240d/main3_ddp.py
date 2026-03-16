@@ -164,13 +164,18 @@ def get_args():
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
     args = parser.parse_args()
-    time_str = time.strftime('%Y-%m-%d-%H-%M')
+    if 'SLURM_JOB_ID' in os.environ:
+        time_str = os.environ['SLURM_JOB_ID']
+    else:
+        time_str = time.strftime('%Y-%m-%d-%H-%M')
+    
     if args.resume:
         args.PATH = args.resume_path  # direcly use the old model path
     else:
         args.PATH = os.path.join(args.PATH, time_str)
     args.save_dir = os.path.join(args.save_dir, time_str)
     os.makedirs(args.PATH, exist_ok=True)
+    os.makedirs(args.save_dir, exist_ok=True)
     return args
 
 
@@ -313,7 +318,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             global_step += 1  # record the global step
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
-                G_x, commit_loss, last_layer = soundstream(x_wav)
+                G_x, commit_loss, last_layer, _ = soundstream(x_wav)
                 if optimizer_idx == 0:
                     # update generator
                     y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
@@ -415,15 +420,16 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                         # Tracking Codebook Perplexity
                         # codes shape: [batch, num_quantizers, time]
                         if codes_hist is None:
-                            num_q = codes.shape[1]
-                            codebook_size = soundstream.quantizer.bins # e.g. 1024
+                            quantizer_module = soundstream.module.quantizer if hasattr(soundstream, 'module') else soundstream.quantizer
+                            num_q = quantizer_module.n_q
+                            codebook_size = quantizer_module.bins # e.g. 1024
                             codes_hist = torch.zeros(num_q, codebook_size, device=args.device, dtype=torch.float64)
                         
                         # Flatten across batch and time for each quantizer separately
-                        for q_idx in range(codes.shape[1]):
-                            codes_q = codes[:, q_idx, :].flatten()
+                        for q_idx in range(codes.shape[0]):
+                            codes_q = codes[q_idx, :, :].flatten()
                             codes_hist[q_idx].scatter_add_(0, codes_q, torch.ones_like(codes_q, dtype=torch.float64))
-                        total_valid_codes += codes.shape[0] * codes.shape[2]
+                        total_valid_codes += codes.shape[1] * codes.shape[2]
 
                         valid_commit_loss += commit_loss
                         y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
@@ -484,6 +490,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     total_valid_codes = total_valid_codes_tensor.item()
                     
                 probs = codes_hist / codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                print(codes_hist.sum(dim=-1, keepdim=True))
+                print(total_valid_codes)
                 entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
                 perplexities = torch.exp2(entropy).tolist()
 

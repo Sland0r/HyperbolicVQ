@@ -288,7 +288,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             global_step += 1  # record the global step
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
-                G_x, commit_loss, last_layer = soundstream(x_wav)
+                G_x, commit_loss, last_layer, _ = soundstream(x_wav)
                 if optimizer_idx == 0:
                     # update generator
                     y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
@@ -379,7 +379,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 x = x.to(args.device)
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)
-                    G_x, commit_loss, _ = soundstream(x_wav)
+                    G_x, commit_loss, _, _ = soundstream(x_wav)
                     if optimizer_idx == 0:
                         valid_commit_loss += commit_loss
                         y_disc_r, fmap_r = stft_disc(x_wav.contiguous())

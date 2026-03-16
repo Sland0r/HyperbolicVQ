@@ -43,7 +43,7 @@ class SoundStream(nn.Module):
         quantized, codes, bandwidth, commit_loss = self.quantizer(
             e, self.frame_rate, bw)
         o = self.decoder(quantized)
-        return o, commit_loss, None
+        return o, commit_loss, None, codes
 
     def encode(self, x, target_bw=None, st=None):
         e = self.encoder(x)
