@@ -282,7 +282,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         k_iter = 0
         if args.distributed:
             train_loader.sampler.set_epoch(epoch)
-        for x in tqdm(train_loader):
+        train_pbar = tqdm(train_loader, desc='train')
+        for x in train_pbar:
             x = x.to(args.device)
             k_iter += 1
             global_step += 1  # record the global step
@@ -345,6 +346,10 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     optimizer_d.zero_grad()
                     loss_d.backward()
                     optimizer_d.step()
+            train_pbar.set_postfix(
+                epoch=epoch,
+                rec_loss=f'{rec_loss.item():.4f}',
+                rec_avg=f'{train_rec_loss / k_iter:.4f}')
             message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}>'.format(
                 epoch, k_iter,
                 total_loss_g.item(),

@@ -163,6 +163,10 @@ def get_args():
         # default for 16k_320d
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
+    parser.add_argument(
+        '--ema',
+        action='store_true',
+        help='use EMA for codebook (default: False)')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -210,7 +214,8 @@ def main_worker(local_rank, args):
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c)
+    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
+                              ema=args.ema)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -312,7 +317,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         k_iter = 0
         if args.distributed:
             train_loader.sampler.set_epoch(epoch)
-        for x in tqdm(train_loader):
+        train_pbar = tqdm(train_loader, desc='train')
+        for x in train_pbar:
             x = x.to(args.device)
             k_iter += 1
             global_step += 1  # record the global step
@@ -375,6 +381,10 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     optimizer_d.zero_grad()
                     loss_d.backward()
                     optimizer_d.step()
+            train_pbar.set_postfix(
+                epoch=epoch,
+                rec_loss=f'{rec_loss.item():.4f}',
+                rec_avg=f'{train_rec_loss / k_iter:.4f}')
             message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}>'.format(
                 epoch, k_iter,
                 total_loss_g.item(),
@@ -418,7 +428,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     if optimizer_idx == 0:
                         G_x, commit_loss, last_layer, codes = soundstream(x_wav)
                         # Tracking Codebook Perplexity
-                        # codes shape: [batch, num_quantizers, time]
+                        # codes shape: [num_quantizers, batch, time]
                         if codes_hist is None:
                             quantizer_module = soundstream.module.quantizer if hasattr(soundstream, 'module') else soundstream.quantizer
                             num_q = quantizer_module.n_q
@@ -490,8 +500,6 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     total_valid_codes = total_valid_codes_tensor.item()
                     
                 probs = codes_hist / codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
-                print(codes_hist.sum(dim=-1, keepdim=True))
-                print(total_valid_codes)
                 entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
                 perplexities = torch.exp2(entropy).tolist()
 
