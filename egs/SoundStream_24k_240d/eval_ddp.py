@@ -133,6 +133,10 @@ def get_args():
         # default for 16k_320d
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
+    parser.add_argument(
+        '--ema',
+        action='store_true',
+        help='use EMA for codebook (default: False)')
     args = parser.parse_args()
     
     if 'SLURM_JOB_ID' in os.environ:
@@ -175,7 +179,7 @@ def main_worker(local_rank, args):
     args.distributed = args.world_size > 1
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c)
+    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c, ema=args.ema)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -243,6 +247,9 @@ def main_worker(local_rank, args):
 
 def evaluate(args, soundstream, stft_disc, msd, mpd, valid_loader, logger):
     logger.log_info(f"Starting evaluation on {len(valid_loader)} batches")
+    print('All arguments:')
+    for k, v in vars(args).items():
+        print(f'  {k}: {v}')
     with torch.no_grad():
         soundstream.eval()
         stft_disc.eval()

@@ -171,10 +171,12 @@ class EuclideanCodebook(nn.Module):
             decay: float=0.99,
             epsilon: float=1e-5,
             threshold_ema_dead_code: int=2,
-            c: float=0., ):
+            c: float=0.,
+            ema: bool=True, ):
         super().__init__()
         self.c = c
         self.decay = decay
+        self.ema = ema
         init_fn: tp.Union[
             tp.Callable[..., torch.Tensor],
             tp.Any] = uniform_init if not kmeans_init else torch.zeros
@@ -338,7 +340,8 @@ class VectorQuantization(nn.Module):
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2,
             commitment_weight: float=1.,
-            c: float=0., ):
+            c: float=0.,
+            ema: bool=True, ):
         super().__init__()
         self.c = c
         _codebook_dim: int = default(codebook_dim, dim)
@@ -360,7 +363,8 @@ class VectorQuantization(nn.Module):
             decay=decay,
             epsilon=epsilon,
             threshold_ema_dead_code=threshold_ema_dead_code,
-            c=c)
+            c=c,
+            ema=ema)
         self.codebook_size = codebook_size
 
     @property

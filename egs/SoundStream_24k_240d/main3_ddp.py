@@ -300,6 +300,9 @@ def main_worker(local_rank, args):
 def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
           optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d, logger):
     print('args ', args.global_rank)
+    print('All arguments:')
+    for k, v in vars(args).items():
+        print(f'  {k}: {v}')
     best_val_loss = float("inf")
     best_val_epoch = -1
     global_step = 0
