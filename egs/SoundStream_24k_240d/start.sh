@@ -15,7 +15,7 @@ source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
-python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
+python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --BATCH_SIZE 32 \
         --N_EPOCHS 5 \
         --PATH  /home/acolombo/VAEs/checkpoint/soundstream \
@@ -25,5 +25,4 @@ python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --ratios 6 5 4 2 \
         --target_bandwidths 1 2 4 8 12 \
         --print_freq 1000 \
-        --ema
-        #--c 1.0
+        --c 1.0

@@ -36,6 +36,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops import repeat
 from torch import nn
+import geoopt
 
 from academicodec.quantization.distrib import broadcast_tensors
 
@@ -48,24 +49,23 @@ def mobius_add(x, y, c):
     denom = 1 + 2 * c * xy + c ** 2 * x2 * y2
     return num / denom.clamp_min(1e-15)
 
-def hyperbolic_distance_sq(x, y, c):
+def hyperbolic_distance_sq(x, y, c, max_dist=10.0):
     m_add = mobius_add(-x, y, c)
-    norm = m_add.norm(dim=-1, keepdim=True)
+    norm = m_add.norm(dim=-1, keepdim=True).clamp_min(1e-15)
     sqrt_c = c ** 0.5
-    arg = (sqrt_c * norm).clamp_max(1 - 1e-5)
+    arg = (sqrt_c * norm).clamp(min=0.0, max=1 - 1e-3)
     dist = (2 / sqrt_c) * torch.atanh(arg)
-    return dist.pow(2)
+    return dist.clamp_max(max_dist).pow(2)
 
-def pairwise_hyperbolic_distance_sq(x, y, c):
+def pairwise_hyperbolic_distance_sq(x, y, c, max_dist=10.0):
     x2 = x.pow(2).sum(dim=-1, keepdim=True)
     y2 = y.pow(2).sum(dim=-1, keepdim=True)
     xy = x @ y.t()
-    sq_dist = x2 + y2.t() - 2 * xy
-    denom = (1 - c * x2) @ (1 - c * y2).t()
-    denom = denom.clamp_min(1e-15)
+    sq_dist = (x2 + y2.t() - 2 * xy).clamp_min(0.0)
+    denom = ((1 - c * x2) @ (1 - c * y2).t()).clamp_min(1e-6)
     arg = 1 + 2 * c * sq_dist / denom
     dist = (1 / (c ** 0.5)) * torch.acosh(arg.clamp_min(1.0 + 1e-5))
-    return dist.pow(2)
+    return dist.clamp_max(max_dist).pow(2)
 
 def exp_map0(v, c):
     norm = v.norm(dim=-1, keepdim=True)
@@ -79,10 +79,16 @@ def log_map0(y, c):
     scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-15))
     return y * scale
 
+def project(x, c, eps=1e-5):
+    """Project x onto the open Poincaré ball of radius 1/sqrt(c)."""
+    max_norm = 1.0 / (c ** 0.5) - eps
+    norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-15)
+    return torch.where(norm > max_norm, x * (max_norm / norm), x)
+
 def exp_map(x, v, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
     lambda_x = 2 / (1 - c * x2)
-    return mobius_add(x, exp_map0(lambda_x * v / 2, c), c)
+    return project(mobius_add(x, exp_map0(lambda_x * v / 2, c), c), c)
 
 def log_map(x, y, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
@@ -141,6 +147,9 @@ def kmeans(samples, num_clusters: int, num_iters: int=10, c: float=0.):
         new_means.scatter_add_(0, repeat(buckets, "n -> n d", d=dim), samples)
         new_means = new_means / bins_min_clamped[..., None]
 
+        if c > 0:
+            new_means = project(new_means, c)
+
         means = torch.where(zero_mask[..., None], means, new_means)
 
     return means, bins
@@ -191,7 +200,10 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("inited", torch.Tensor([not kmeans_init]))
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         if not self.ema:
-            self.embed = nn.Parameter(embed)
+            if self.c > 0:
+                self.embed = geoopt.ManifoldParameter(embed, manifold=geoopt.PoincareBall(c=self.c))
+            else:
+                self.embed = nn.Parameter(embed)
         else:
             self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
@@ -304,6 +316,7 @@ class EuclideanCodebook(nn.Module):
                 
                 # Move the active centroids along the geodesic by the step amount
                 embed_normalized = exp_map(self.embed, step, self.c)
+                embed_normalized = project(embed_normalized, self.c)
                 self.embed.data.copy_(embed_normalized)
 
             else:
@@ -403,8 +416,8 @@ class VectorQuantization(nn.Module):
 
         if self.training:
             if self.c > 0:
-                diff = mobius_add(-x, quantize, self.c) # TODO: check this
-                quantize = mobius_add(x, diff.detach(), self.c)
+                diff = mobius_add(-x, quantize, self.c)
+                quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             else:
                 quantize = x + (quantize - x).detach()
 
@@ -443,10 +456,11 @@ class ResidualVectorQuantization(nn.Module):
         self.c = kwargs.get("c", 0.0)
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
+        print("EMA", kwargs.get("ema", False))
 
     def forward(self, x, n_q: tp.Optional[int]=None):
         if self.c > 0:
-            residual = exp_map0(x, self.c)
+            residual = project(exp_map0(x, self.c), self.c)
             quantized_out = torch.zeros_like(residual)
         else:
             residual = x
@@ -460,8 +474,8 @@ class ResidualVectorQuantization(nn.Module):
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
             if self.c > 0:
-                residual = mobius_add(-quantized, residual, self.c)
-                quantized_out = mobius_add(quantized_out, quantized, self.c)
+                residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
             else:
                 residual = residual - quantized
                 quantized_out = quantized_out + quantized
@@ -480,7 +494,7 @@ class ResidualVectorQuantization(nn.Module):
                n_q: tp.Optional[int]=None,
                st: tp.Optional[int]=None) -> torch.Tensor:
         if self.c > 0:
-            residual = exp_map0(x, self.c)
+            residual = project(exp_map0(x, self.c), self.c)
         else:
             residual = x
         all_indices = []
@@ -490,7 +504,7 @@ class ResidualVectorQuantization(nn.Module):
             indices = layer.encode(residual)
             quantized = layer.decode(indices)
             if self.c > 0:
-                residual = mobius_add(-quantized, residual, self.c)
+                residual = project(mobius_add(-quantized, residual, self.c), self.c)
             else:
                 residual = residual - quantized
             all_indices.append(indices)
@@ -511,7 +525,7 @@ class ResidualVectorQuantization(nn.Module):
             first = False
 
             if self.c > 0:
-                quantized_out = mobius_add(quantized_out, quantized, self.c)
+                quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
             else:
                 quantized_out = quantized_out + quantized
         

@@ -5,6 +5,7 @@ import os
 import time
 
 import torch
+import geoopt
 import torch.distributed as dist
 from academicodec.models.encodec.distributed.launch import launch
 from academicodec.models.encodec.msstftd import MultiScaleSTFTDiscriminator
@@ -112,7 +113,7 @@ def get_args():
     parser.add_argument(
         '--LAMBDA_COM',
         type=float,
-        default=1000,
+        default=1,
         help='hyper-parameter for commit loss')
     parser.add_argument(
         '--N_EPOCHS', type=int, default=100, help='Total training epoch')
@@ -271,8 +272,11 @@ def main_worker(local_rank, args):
         batch_size=args.BATCH_SIZE,
         num_workers=8,
         sampler=valid_sampler)
-    optimizer_g = torch.optim.AdamW(
-        soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
+    if args.c > 0:
+        optimizer_g = geoopt.optim.RiemannianAdam(soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
+    else:
+        optimizer_g = torch.optim.AdamW(
+            soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
     lr_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optimizer_g, gamma=0.999)
     optimizer_d = torch.optim.AdamW(
@@ -328,6 +332,16 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
                 G_x, commit_loss, last_layer, _ = soundstream(x_wav)
+                # --- NaN debug ---
+                import sys
+                if torch.isnan(G_x).any():
+                    print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x has NaN", file=sys.stderr, flush=True)
+                if torch.isnan(commit_loss).any():
+                    print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: commit_loss={commit_loss.item()} has NaN", file=sys.stderr, flush=True)
+                if not torch.isnan(G_x).any() and not torch.isnan(commit_loss).any():
+                    if k_iter <= 10:
+                        print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x OK (max={G_x.abs().max().item():.4f}), commit_loss={commit_loss.item():.4f}", file=sys.stderr, flush=True)
+                # --- end NaN debug ---
                 if optimizer_idx == 0:
                     # update generator
                     y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
@@ -363,6 +377,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_rec_loss += rec_loss.item()
                     optimizer_g.zero_grad()
                     total_loss_g.backward()
+                    torch.nn.utils.clip_grad_norm_(soundstream.parameters(), max_norm=1.0)
                     optimizer_g.step()
                 else:
                     # update discriminator
