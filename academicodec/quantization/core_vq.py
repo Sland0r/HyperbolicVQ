@@ -171,10 +171,12 @@ class EuclideanCodebook(nn.Module):
             decay: float=0.99,
             epsilon: float=1e-5,
             threshold_ema_dead_code: int=2,
-            c: float=0., ):
+            c: float=0.,
+            ema: bool=True, ):
         super().__init__()
         self.c = c
         self.decay = decay
+        self.ema = ema
         init_fn: tp.Union[
             tp.Callable[..., torch.Tensor],
             tp.Any] = uniform_init if not kmeans_init else torch.zeros
@@ -188,7 +190,10 @@ class EuclideanCodebook(nn.Module):
 
         self.register_buffer("inited", torch.Tensor([not kmeans_init]))
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
-        self.register_buffer("embed", embed)
+        if not self.ema:
+            self.embed = nn.Parameter(embed)
+        else:
+            self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
 
     @torch.jit.ignore
@@ -207,7 +212,7 @@ class EuclideanCodebook(nn.Module):
 
     def replace_(self, samples, mask):
         modified_codebook = torch.where(
-            mask[..., None],
+            mask[..., None], # true when codebook is dead
             sample_vectors(samples, self.codebook_size), self.embed)
         self.embed.data.copy_(modified_codebook)
 
@@ -215,11 +220,11 @@ class EuclideanCodebook(nn.Module):
         if self.threshold_ema_dead_code == 0:
             return
 
-        expired_codes = self.cluster_size < self.threshold_ema_dead_code
+        expired_codes = self.cluster_size < self.threshold_ema_dead_code # number of clusters = codebook size
         if not torch.any(expired_codes):
             return
 
-        batch_samples = rearrange(batch_samples, "... d -> (...) d")
+        batch_samples = rearrange(batch_samples, "... d -> (...) d") # likely not necessary, already in that form
         self.replace_(batch_samples, mask=expired_codes)
         broadcast_tensors(self.buffers())
 
@@ -260,27 +265,31 @@ class EuclideanCodebook(nn.Module):
 
     def forward(self, x):
         shape, dtype = x.shape, x.dtype
-        x = self.preprocess(x)
+        x = self.preprocess(x) # (everything, dim)
 
         self.init_embed_(x)
 
-        embed_ind = self.quantize(x)
+        embed_ind = self.quantize(x) # indices of the closest centroid
         embed_onehot = F.one_hot(embed_ind, self.codebook_size).type(dtype)
-        embed_ind = self.postprocess_emb(embed_ind, shape)
-        quantize = self.dequantize(embed_ind)
+        embed_ind = self.postprocess_emb(embed_ind, shape) # back to normal shape
+        quantize = self.dequantize(embed_ind) # quantized x
 
         if self.training:
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
             self.expire_codes_(x)
-            
-            if self.c > 0:
+
+            if not self.ema:
+                # Skip EMA: codebook is nn.Parameter, updated via optimizer
+                # TODO: might add reset for dead codes here
+                pass
+            elif self.c > 0:
                 ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
                 # Compute smoothed denominator for EMA
                 cluster_size = (
                     laplace_smoothing(self.cluster_size, self.codebook_size,
                                       self.epsilon) * self.cluster_size.sum())
-                                      
+
                 # Map x to the tangent space of their assigned centroids
                 embed_ind_flat = embed_ind.view(-1)
                 embedded = self.embed[embed_ind_flat] # Contextual centroids per batch item
@@ -338,9 +347,11 @@ class VectorQuantization(nn.Module):
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2,
             commitment_weight: float=1.,
-            c: float=0., ):
+            c: float=0.,
+            ema: bool=True, ):
         super().__init__()
         self.c = c
+        self.ema = ema
         _codebook_dim: int = default(codebook_dim, dim)
 
         requires_projection = _codebook_dim != dim
@@ -360,7 +371,8 @@ class VectorQuantization(nn.Module):
             decay=decay,
             epsilon=epsilon,
             threshold_ema_dead_code=threshold_ema_dead_code,
-            c=c)
+            c=c,
+            ema=ema)
         self.codebook_size = codebook_size
 
     @property
@@ -379,16 +391,19 @@ class VectorQuantization(nn.Module):
         quantize = rearrange(quantize, "b n d -> b d n")
         return quantize
 
-    def forward(self, x):
+    def forward(self, x): # quantizes x, computes loss depending on distance to codes, properly propagates gradients
         device = x.device
         x = rearrange(x, "b d n -> b n d")
         x = self.project_in(x)
 
         quantize, embed_ind = self._codebook(x)
 
+        # Save pre-STE quantize (has gradient path to embed) for codebook loss
+        quantize_raw = quantize
+
         if self.training:
             if self.c > 0:
-                diff = mobius_add(-x, quantize, self.c)
+                diff = mobius_add(-x, quantize, self.c) # TODO: check this
                 quantize = mobius_add(x, diff.detach(), self.c)
             else:
                 quantize = x + (quantize - x).detach()
@@ -402,6 +417,16 @@ class VectorQuantization(nn.Module):
                 else:
                     commit_loss = F.mse_loss(quantize.detach(), x)
                 loss = loss + commit_loss * self.commitment_weight
+
+            if not self.ema:
+                # Codebook loss: drive codebook embeddings toward residuals
+                # Use quantize_raw (pre-STE) so gradients flow to embed
+                #TODO: make the gradient riemannian
+                if self.c > 0:
+                    codebook_loss = hyperbolic_distance_sq(x.detach(), quantize_raw, self.c).mean()
+                else:
+                    codebook_loss = F.mse_loss(x.detach(), quantize_raw)
+                loss = loss + codebook_loss
 
         quantize = self.project_out(quantize)
         quantize = rearrange(quantize, "b n d -> b d n")
@@ -435,7 +460,7 @@ class ResidualVectorQuantization(nn.Module):
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
             if self.c > 0:
-                residual = mobius_add(residual, -quantized, self.c)
+                residual = mobius_add(-quantized, residual, self.c)
                 quantized_out = mobius_add(quantized_out, quantized, self.c)
             else:
                 residual = residual - quantized
@@ -465,7 +490,7 @@ class ResidualVectorQuantization(nn.Module):
             indices = layer.encode(residual)
             quantized = layer.decode(indices)
             if self.c > 0:
-                residual = mobius_add(residual, -quantized, self.c)
+                residual = mobius_add(-quantized, residual, self.c)
             else:
                 residual = residual - quantized
             all_indices.append(indices)
