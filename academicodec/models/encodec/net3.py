@@ -19,7 +19,8 @@ class SoundStream(nn.Module):
                  bins=1024,
                  normalize=False,
                  c: float=0.0,
-                 ema: bool=True):
+                 ema: bool=True,
+                 kmeans_init: bool=True):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -31,7 +32,7 @@ class SoundStream(nn.Module):
         self.target_bandwidths = target_bandwidths
         self.quantizer = ResidualVectorQuantizer(
             dimension=D, n_q=n_q, bins=bins, c=c,
-            ema=ema)
+            ema=ema, kmeans_init=kmeans_init)
         self.decoder = SEANetDecoder(
             n_filters=n_filters, dimension=D, ratios=ratios)
 

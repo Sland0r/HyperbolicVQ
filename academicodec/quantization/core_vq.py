@@ -41,59 +41,83 @@ import geoopt
 from academicodec.quantization.distrib import broadcast_tensors
 
 
+def check_nan(x, msg):
+    if torch.is_tensor(x) and torch.isnan(x).any():
+        print(f"NaN DETECTED: {msg}", flush=True)
+        import sys
+        sys.exit(1) # Stop immediately so we can see the trace and print
+    return x
+
 def mobius_add(x, y, c):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True)
-    y2 = y.pow(2).sum(dim=-1, keepdim=True)
-    xy = (x * y).sum(dim=-1, keepdim=True)
-    num = (1 + 2 * c * xy + c * y2) * x + (1 - c * x2) * y
-    denom = 1 + 2 * c * xy + c ** 2 * x2 * y2
-    return num / denom.clamp_min(1e-15)
+    x2 = x.pow(2).sum(dim=-1, keepdim=True) # "mobius_add x2"
+    y2 = y.pow(2).sum(dim=-1, keepdim=True) # "mobius_add y2"
+    xy = (x * y).sum(dim=-1, keepdim=True) # "mobius_add xy"
+    num = (1 + 2 * c * xy + c * y2) * x + (1 - c * x2) * y # "mobius_add num"
+    denom = 1 + 2 * c * xy + c ** 2 * x2 * y2 # "mobius_add denom"
+    return num / denom.clamp_min(1e-5) # "mobius_add result"
+
+def mobius_sub(x, y, c):
+    return mobius_add(x, -y, c)
 
 def hyperbolic_distance_sq(x, y, c, max_dist=10.0):
-    m_add = mobius_add(-x, y, c)
-    norm = m_add.norm(dim=-1, keepdim=True).clamp_min(1e-15)
+    m_add = mobius_sub(x, y, c) # "hyperbolic_distance_sq m_add"
+    norm = m_add.norm(dim=-1, keepdim=True).clamp_min(1e-5) # "hyperbolic_distance_sq norm"
     sqrt_c = c ** 0.5
-    arg = (sqrt_c * norm).clamp(min=0.0, max=1 - 1e-3)
-    dist = (2 / sqrt_c) * torch.atanh(arg)
-    return dist.clamp_max(max_dist).pow(2)
+    arg = (sqrt_c * norm).clamp(min=0.0, max=1 - 1e-3) # "hyperbolic_distance_sq arg"
+    dist = (2 / sqrt_c) * torch.atanh(arg) # "hyperbolic_distance_sq dist"
+    return dist.pow(2) # "hyperbolic_distance_sq result"
 
 def pairwise_hyperbolic_distance_sq(x, y, c, max_dist=10.0):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True)
-    y2 = y.pow(2).sum(dim=-1, keepdim=True)
-    xy = x @ y.t()
-    sq_dist = (x2 + y2.t() - 2 * xy).clamp_min(0.0)
-    denom = ((1 - c * x2) @ (1 - c * y2).t()).clamp_min(1e-6)
-    arg = 1 + 2 * c * sq_dist / denom
-    dist = (1 / (c ** 0.5)) * torch.acosh(arg.clamp_min(1.0 + 1e-5))
-    return dist.clamp_max(max_dist).pow(2)
+    x2 = x.pow(2).sum(dim=-1, keepdim=True) # "pairwise_hyperbolic_distance_sq x2"
+    y2 = y.pow(2).sum(dim=-1, keepdim=True) # "pairwise_hyperbolic_distance_sq y2"
+    xy = x @ y.t() # "pairwise_hyperbolic_distance_sq xy"
+    sq_dist = (x2 + y2.t() - 2 * xy).clamp_min(0.0) # "pairwise_hyperbolic_distance_sq sq_dist"
+    denom = ((1 - c * x2) @ (1 - c * y2).t()).clamp_min(1e-6) # "pairwise_hyperbolic_distance_sq denom"
+    arg = 1 + 2 * c * sq_dist / denom # "pairwise_hyperbolic_distance_sq arg"
+    dist = (1 / (c ** 0.5)) * torch.acosh(arg.clamp_min(1.0 + 1e-5)) # "pairwise_hyperbolic_distance_sq dist"
+    return dist.pow(2) # "pairwise_hyperbolic_distance_sq result"
 
 def exp_map0(v, c):
-    norm = v.norm(dim=-1, keepdim=True)
+    norm = v.norm(dim=-1, keepdim=True) # "exp_map0 norm"
     sqrt_c = c ** 0.5
-    scale = torch.tanh(sqrt_c * norm) / (sqrt_c * norm.clamp_min(1e-15))
-    return v * scale
+    scale = torch.tanh(sqrt_c * norm) / (sqrt_c * norm.clamp_min(1e-5)) # "exp_map0 scale"
+    return v * scale # "exp_map0 result"
 
 def log_map0(y, c):
-    norm = y.norm(dim=-1, keepdim=True)
+    norm = y.norm(dim=-1, keepdim=True) # "log_map0 norm"
     sqrt_c = c ** 0.5
-    scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-15))
-    return y * scale
+    scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-5)) # "log_map0 scale"
+    return y * scale # "log_map0 result"
 
-def project(x, c, eps=1e-5):
+def project(x, c, eps=1e-7):
     """Project x onto the open Poincaré ball of radius 1/sqrt(c)."""
     max_norm = 1.0 / (c ** 0.5) - eps
-    norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-15)
-    return torch.where(norm > max_norm, x * (max_norm / norm), x)
+    norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-5) # "project norm"
+    return torch.where(norm > max_norm, x * (max_norm / (norm + eps)), x) # "project result"
+
+# def _project(x, k, dim: int = -1, eps: float = -1.0):
+#     if eps < 0:
+#         if x.dtype == torch.float32:
+#             eps = 4e-3
+#         else:
+#             eps = 1e-5
+#     maxnorm = (1 - eps) / (sabs(k) ** 0.5)
+#     maxnorm = torch.where(k.lt(0), maxnorm, k.new_full((), 1e15))
+#     norm = x.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
+#     cond = norm > maxnorm
+#     projected = x / norm * maxnorm
+#     return torch.where(cond, projected, x)
+
 
 def exp_map(x, v, c):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
-    lambda_x = 2 / (1 - c * x2)
-    return project(mobius_add(x, exp_map0(lambda_x * v / 2, c), c), c)
+    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
+    lambda_x = 2 / (1 - c * x2) # "exp_map lambda_x"
+    return project(mobius_add(x, exp_map0(lambda_x * v / 2, c), c), c) # "exp_map result"
 
 def log_map(x, y, c):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
-    lambda_x = 2 / (1 - c * x2)
-    return log_map0(mobius_add(-x, y, c), c) * 2 / lambda_x
+    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "log_map x2"
+    lambda_x = 2 / (1 - c * x2) # "log_map lambda_x"
+    return log_map0(mobius_add(-x, y, c), c) * 2 / lambda_x # "log_map result"
 
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
@@ -221,11 +245,16 @@ class EuclideanCodebook(nn.Module):
         self.inited.data.copy_(torch.Tensor([True]))
         # Make sure all buffers across workers are in sync after initialization
         broadcast_tensors(self.buffers())
+        if not self.ema:
+            # Also sync the codebook embeddings which are nn.Parameter when not using EMA
+            broadcast_tensors([self.embed])
 
     def replace_(self, samples, mask):
         modified_codebook = torch.where(
             mask[..., None], # true when codebook is dead
             sample_vectors(samples, self.codebook_size), self.embed)
+        if self.c > 0:
+            modified_codebook = project(modified_codebook, self.c)
         self.embed.data.copy_(modified_codebook)
 
     def expire_codes_(self, batch_samples):
@@ -290,13 +319,13 @@ class EuclideanCodebook(nn.Module):
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
             self.expire_codes_(x)
+            ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
 
             if not self.ema:
                 # Skip EMA: codebook is nn.Parameter, updated via optimizer
                 # TODO: might add reset for dead codes here
                 pass
             elif self.c > 0:
-                ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
                 # Compute smoothed denominator for EMA
                 cluster_size = (
                     laplace_smoothing(self.cluster_size, self.codebook_size,
@@ -320,7 +349,6 @@ class EuclideanCodebook(nn.Module):
                 self.embed.data.copy_(embed_normalized)
 
             else:
-                ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
                 embed_sum = x.t() @ embed_onehot
                 ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
                 cluster_size = (
@@ -416,7 +444,7 @@ class VectorQuantization(nn.Module):
 
         if self.training:
             if self.c > 0:
-                diff = mobius_add(-x, quantize, self.c)
+                diff = mobius_sub(quantize, x, self.c)
                 quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             else:
                 quantize = x + (quantize - x).detach()
@@ -434,7 +462,6 @@ class VectorQuantization(nn.Module):
             if not self.ema:
                 # Codebook loss: drive codebook embeddings toward residuals
                 # Use quantize_raw (pre-STE) so gradients flow to embed
-                #TODO: make the gradient riemannian
                 if self.c > 0:
                     codebook_loss = hyperbolic_distance_sq(x.detach(), quantize_raw, self.c).mean()
                 else:
@@ -461,11 +488,10 @@ class ResidualVectorQuantization(nn.Module):
     def forward(self, x, n_q: tp.Optional[int]=None):
         if self.c > 0:
             residual = project(exp_map0(x, self.c), self.c)
-            quantized_out = torch.zeros_like(residual)
         else:
             residual = x
-            quantized_out = 0.0
 
+        quantized_out = torch.zeros_like(residual)
         all_losses = []
         all_indices = []
 
@@ -474,7 +500,7 @@ class ResidualVectorQuantization(nn.Module):
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
             if self.c > 0:
-                residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                residual = project(mobius_sub(residual, quantized, self.c), self.c)
                 quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
             else:
                 residual = residual - quantized

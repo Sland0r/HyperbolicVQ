@@ -113,7 +113,7 @@ def get_args():
     parser.add_argument(
         '--LAMBDA_COM',
         type=float,
-        default=1,
+        default=1000,
         help='hyper-parameter for commit loss')
     parser.add_argument(
         '--N_EPOCHS', type=int, default=100, help='Total training epoch')
@@ -168,6 +168,20 @@ def get_args():
         '--ema',
         action='store_true',
         help='use EMA for codebook (default: False)')
+    parser.add_argument(
+        '--kmeans_init',
+        action='store_true',
+        help='use kmeans_init for codebook (default: False)')
+    parser.add_argument(
+        '--codebook_number',
+        type=int,
+        default=0,
+        help='which codebook to visualize (default: 0)')
+    parser.add_argument(
+        '--number_of_steps',
+        type=int,
+        default=100,
+        help='save codebook every number_of_steps batches (default: 100)')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -208,15 +222,41 @@ def main():
         args=(args, ))
 
 
+def add_nan_hook(model, model_name):
+    def check_nan(name, x):
+        if torch.is_tensor(x) and torch.isnan(x).any():
+            print(f"NaN DETECTED in {name}", flush=True)
+            import sys
+            sys.exit(1)
+            
+    def hook(module, input, output):
+        module_name = f"{model_name}.{module.__class__.__name__}"
+        if isinstance(output, tuple):
+            for i, out in enumerate(output):
+                check_nan(f"{module_name} (output {i})", out)
+        elif isinstance(output, list):
+            for i, out in enumerate(output):
+                check_nan(f"{module_name} (output {i})", out)
+        elif isinstance(output, dict):
+            for k, out in output.items():
+                check_nan(f"{module_name} (output {k})", out)
+        else:
+            check_nan(module_name, output)
+
+    for name, submodule in model.named_modules():
+        submodule.register_forward_hook(hook)
+
 def main_worker(local_rank, args):
     args.local_rank = local_rank
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
     args.distributed = args.world_size > 1
+    # torch.autograd.set_detect_anomaly(True)
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
     # 240倍下采
     soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
-                              ema=args.ema)
+                              ema=args.ema, kmeans_init=args.kmeans_init)
+    #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)
@@ -272,6 +312,41 @@ def main_worker(local_rank, args):
         batch_size=args.BATCH_SIZE,
         num_workers=8,
         sampler=valid_sampler)
+        
+    # manifold_params = []
+    # euclidean_params = []
+
+    # for p in soundstream.parameters():
+    #     if hasattr(p, "manifold"):
+    #         manifold_params.append(p)
+    #     else:
+    #         euclidean_params.append(p)
+
+    # print(f"Manifold params: {len(manifold_params)}")
+
+    # if args.c > 0:
+    #     optimizer_g = geoopt.optim.RiemannianAdam(
+    #         manifold_params,
+    #         lr=3e-4,
+    #         betas=(0.5, 0.9),
+    #         eps=1e-8
+    #     )
+
+    #     optimizer_e = torch.optim.AdamW(
+    #         euclidean_params,
+    #         lr=3e-4,
+    #         betas=(0.5, 0.9),
+    #         weight_decay=1e-4
+    #     )
+    # else:
+    #     optimizer_e = torch.optim.AdamW(
+    #         soundstream.parameters(),
+    #         lr=3e-4,
+    #         betas=(0.5, 0.9),
+    #         weight_decay=1e-4
+    #     )
+    #     optimizer_g = None
+        
     if args.c > 0:
         optimizer_g = geoopt.optim.RiemannianAdam(soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
     else:
@@ -303,6 +378,9 @@ def main_worker(local_rank, args):
 
 def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
           optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d, logger):
+    from academicodec.visualization import fit_pca, plot_codes, create_gif
+    pca_fitted = False
+    pca_model = None
     print('args ', args.global_rank)
     print('All arguments:')
     for k, v in vars(args).items():
@@ -333,16 +411,32 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 x_wav = get_input(x)
                 G_x, commit_loss, last_layer, _ = soundstream(x_wav)
                 # --- NaN debug ---
-                import sys
-                if torch.isnan(G_x).any():
-                    print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x has NaN", file=sys.stderr, flush=True)
-                if torch.isnan(commit_loss).any():
-                    print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: commit_loss={commit_loss.item()} has NaN", file=sys.stderr, flush=True)
-                if not torch.isnan(G_x).any() and not torch.isnan(commit_loss).any():
-                    if k_iter <= 10:
-                        print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x OK (max={G_x.abs().max().item():.4f}), commit_loss={commit_loss.item():.4f}", file=sys.stderr, flush=True)
+                # import sys
+                # if torch.isnan(G_x).any():
+                #     print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x has NaN", file=sys.stderr, flush=True)
+                # if torch.isnan(commit_loss).any():
+                #     print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: commit_loss={commit_loss.item()} has NaN", file=sys.stderr, flush=True)
+                # if not torch.isnan(G_x).any() and not torch.isnan(commit_loss).any():
+                #     if k_iter <= 10:
+                #         print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x OK (max={G_x.abs().max().item():.4f}), commit_loss={commit_loss.item():.4f}", file=sys.stderr, flush=True)
                 # --- end NaN debug ---
                 if optimizer_idx == 0:
+                    # check codebook visualization
+                    if not pca_fitted:
+                        codebook_module = soundstream.module.quantizer.vq.layers[args.codebook_number]._codebook if args.distributed else soundstream.quantizer.vq.layers[args.codebook_number]._codebook
+                        if hasattr(codebook_module, "inited") and codebook_module.inited:
+                            codes = codebook_module.embed.detach().cpu()
+                            if not args.distributed or dist.get_rank() == 0:
+                                pca_model = fit_pca(codes, args.c)
+                                os.makedirs(os.path.join(args.save_dir, "codebook_plots"), exist_ok=True)
+                            pca_fitted = True
+                            
+                    if pca_fitted and (global_step % args.number_of_steps == 0):
+                        if not args.distributed or dist.get_rank() == 0:
+                            codebook_module = soundstream.module.quantizer.vq.layers[args.codebook_number]._codebook if args.distributed else soundstream.quantizer.vq.layers[args.codebook_number]._codebook
+                            codes = codebook_module.embed.detach().cpu()
+                            plot_codes(codes, pca_model, args.c, global_step, os.path.join(args.save_dir, "codebook_plots"))
+
                     # update generator
                     y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
                     y_disc_gen, fmap_gen = stft_disc(G_x.contiguous())
@@ -398,11 +492,14 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_loss_d += loss_d.item()
                     optimizer_d.zero_grad()
                     loss_d.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        itertools.chain(stft_disc.parameters(), msd.parameters(), mpd.parameters()), max_norm=1.0)
                     optimizer_d.step()
             train_pbar.set_postfix(
                 epoch=epoch,
                 rec_loss=f'{rec_loss.item():.4f}',
-                rec_avg=f'{train_rec_loss / k_iter:.4f}')
+                rec_avg=f'{train_rec_loss / k_iter:.4f}',
+                lr_g=f"{optimizer_g.param_groups[0]['lr']:.2e}")
             message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}>'.format(
                 epoch, k_iter,
                 total_loss_g.item(),
@@ -553,6 +650,10 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 valid_commit_loss / len(valid_loader),
                 valid_loss_d / len(valid_loader), ppl_str, best_val_epoch)
             logger.log_info(message)
+
+    if not args.distributed or dist.get_rank() == 0:
+        create_gif(os.path.join(args.save_dir, "codebook_plots"), os.path.join(args.save_dir, "codebook_evolution.gif"))
+
 
 
 if __name__ == '__main__':
