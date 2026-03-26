@@ -8,3 +8,4 @@ torchcodec
 soundfile
 geoopt
 scikit-learn
+torchvision

@@ -15,4 +15,4 @@ source activate vaes
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
 python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/analyze_weights.py \
-    --path /home/acolombo/VAEs/checkpoint/soundstream/21055539/latest.pth
+    --path /home/acolombo/VAEs/checkpoint/soundstream/21002396/latest.pth
