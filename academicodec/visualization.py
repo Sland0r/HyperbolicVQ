@@ -15,11 +15,6 @@ def fit_pca(codes, c, n_components=2):
         codes = log_map0(codes, c)
     pca = PCA(n_components=n_components)
     pca.fit(codes.numpy())
-    
-    # Store the maximum radius of the initial configuration for consistent plotting bounds
-    codes_2d_euclidean = pca.transform(codes.numpy())
-    pca.max_radius_euclidean = float(np.max(np.abs(codes_2d_euclidean)))
-    
     return pca
 
 def plot_codes(codes, pca, c, step, output_dir):
@@ -54,11 +49,11 @@ def plot_codes(codes, pca, c, step, output_dir):
         plt.xlim(-radius - 0.1, radius + 0.1)
         plt.ylim(-radius - 0.1, radius + 0.1)
     else:
-        # Clamp bounds for Euclidean space to prevent jittering across frames
-        if hasattr(pca, "max_radius_euclidean"):
-            bound = pca.max_radius_euclidean * 1.5  # Add some padding to initial bounds
-            plt.xlim(-bound, bound)
-            plt.ylim(-bound, bound)
+        # Per-frame adaptive bounds with a minimum floor to avoid near-zero axes
+        current_radius = float(np.max(np.abs(codes_2d))) if codes_2d.size > 0 else 0.5
+        bound = max(current_radius, 0.5) * 1.3
+        plt.xlim(-bound, bound)
+        plt.ylim(-bound, bound)
     
     plt.grid(True)
     os.makedirs(output_dir, exist_ok=True)

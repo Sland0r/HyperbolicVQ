@@ -20,7 +20,8 @@ class SoundStream(nn.Module):
                  normalize=False,
                  c: float=0.0,
                  ema: bool=True,
-                 kmeans_init: bool=True):
+                 kmeans_init: bool=True,
+                 pre_quant_batchnorm: bool=False):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -33,6 +34,8 @@ class SoundStream(nn.Module):
         self.quantizer = ResidualVectorQuantizer(
             dimension=D, n_q=n_q, bins=bins, c=c,
             ema=ema, kmeans_init=kmeans_init)
+        self.pre_quant_batchnorm = pre_quant_batchnorm
+        self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(
             n_filters=n_filters, dimension=D, ratios=ratios)
 
@@ -41,6 +44,7 @@ class SoundStream(nn.Module):
 
     def forward(self, x):
         e = self.encoder(x)
+        e = self.pre_quant_bn(e)
         max_idx = len(self.target_bandwidths) - 1
         bw = self.target_bandwidths[random.randint(0, max_idx)] # maybe make exponential
         quantized, codes, bandwidth, commit_loss = self.quantizer(
@@ -50,6 +54,7 @@ class SoundStream(nn.Module):
 
     def encode(self, x, target_bw=None, st=None):
         e = self.encoder(x)
+        e = self.pre_quant_bn(e)
         if target_bw is None:
             bw = self.target_bandwidths[-1]
         else:

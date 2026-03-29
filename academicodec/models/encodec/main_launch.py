@@ -130,6 +130,10 @@ def get_args():
         # default for 16k_320d
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
+    parser.add_argument(
+        '--pre_quant_batchnorm',
+        action='store_true',
+        help='apply BatchNorm1d on encoder output right before quantization')
     args = parser.parse_args()
     time_str = time.strftime('%Y-%m-%d-%H-%M')
     if args.resume:
@@ -172,7 +176,8 @@ def main_worker(local_rank, args):
         D=512, 
         ratios=args.ratios,
         sample_rate=args.sr,
-        target_bandwidths=args.target_bandwidths)
+        target_bandwidths=args.target_bandwidths,
+        pre_quant_batchnorm=args.pre_quant_batchnorm)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)

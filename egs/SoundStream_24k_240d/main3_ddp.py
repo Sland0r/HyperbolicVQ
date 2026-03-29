@@ -1,5 +1,6 @@
 # 与 Encodec_24k_240d main3_ddp.py 相比只有鉴别器不同
 import argparse
+import glob
 import itertools
 import os
 import time
@@ -45,6 +46,66 @@ def getModelSize(model):
     all_size = (param_size + buffer_size) / 1024 / 1024
     print('模型总大小为：{:.3f}MB'.format(all_size))
     return (param_size, param_sum, buffer_size, buffer_sum, all_size)
+
+
+def _raise_non_finite(name, tensor, stage):
+    finite_mask = torch.isfinite(tensor)
+    bad_idx = (~finite_mask).nonzero(as_tuple=False)
+    first_bad = bad_idx[0].tolist() if bad_idx.numel() > 0 else []
+    nan_count = torch.isnan(tensor).sum().item()
+    posinf_count = torch.isposinf(tensor).sum().item()
+    neginf_count = torch.isneginf(tensor).sum().item()
+    finite_vals = tensor[finite_mask]
+    finite_min = finite_vals.min().item() if finite_vals.numel() > 0 else float('nan')
+    finite_max = finite_vals.max().item() if finite_vals.numel() > 0 else float('nan')
+    raise RuntimeError(
+        f"Non-finite detected at {stage}: {name}, shape={tuple(tensor.shape)}, "
+        f"dtype={tensor.dtype}, nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
+        f"first_bad_index={first_bad}, finite_min={finite_min:.6g}, finite_max={finite_max:.6g}"
+    )
+
+
+def check_quantizer_finite(module, stage):
+    for name, param in module.named_parameters():
+        if 'quantizer' not in name and 'codebook' not in name:
+            continue
+        if not torch.isfinite(param.data).all():
+            _raise_non_finite(name, param.data, stage)
+        if param.grad is not None and not torch.isfinite(param.grad).all():
+            _raise_non_finite(f"{name}.grad", param.grad, stage)
+
+
+def check_quantizer_optimizer_state_finite(module, optimizer, stage):
+    tracked = {
+        param: name for name, param in module.named_parameters()
+        if ('quantizer' in name or 'codebook' in name)
+    }
+    for param, state in optimizer.state.items():
+        name = tracked.get(param)
+        if name is None:
+            continue
+        for state_key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+            tensor = state.get(state_key)
+            if torch.is_tensor(tensor) and not torch.isfinite(tensor).all():
+                _raise_non_finite(f"optimizer_state[{state_key}]/{name}", tensor, stage)
+
+
+def clip_named_grad_norm(module, max_norm, *, include_quantizer=True, manifold_only=False):
+    params = []
+    for name, param in module.named_parameters():
+        if param.grad is None:
+            continue
+        if include_quantizer and ('quantizer' not in name and 'codebook' not in name):
+            continue
+        if manifold_only and not hasattr(param, 'manifold'):
+            continue
+        params.append(param)
+    if len(params) == 0:
+        return 0.0
+    total_norm = torch.nn.utils.clip_grad_norm_(params, max_norm=max_norm)
+    if torch.is_tensor(total_norm):
+        total_norm = total_norm.item()
+    return float(total_norm)
 
 
 def get_args():
@@ -131,8 +192,9 @@ def get_args():
     parser.add_argument('--sr', type=int, default=24000, help='sample rate')
     parser.add_argument(
         '--print_freq', type=int, default=10, help='the print number')
+    # --save_dir kept for backward compat but defaults to PATH
     parser.add_argument(
-        '--save_dir', type=str, default='log', help='log save path')
+        '--save_dir', type=str, default=None, help='(deprecated, uses PATH)')
     parser.add_argument(
         '--train_data_path',
         type=str,
@@ -173,6 +235,10 @@ def get_args():
         action='store_true',
         help='use kmeans_init for codebook (default: False)')
     parser.add_argument(
+        '--pre_quant_batchnorm',
+        action='store_true',
+        help='apply BatchNorm1d on encoder output right before quantization')
+    parser.add_argument(
         '--codebook_number',
         type=int,
         default=0,
@@ -180,8 +246,43 @@ def get_args():
     parser.add_argument(
         '--number_of_steps',
         type=int,
-        default=100,
+        default=500,
         help='save codebook every number_of_steps batches (default: 100)')
+    parser.add_argument(
+        '--lr_g',
+        type=float,
+        default=3e-4,
+        help='base learning rate for generator and euclidean parameters')
+    parser.add_argument(
+        '--lr_manifold',
+        type=float,
+        default=1e-5,
+        help='learning rate for manifold parameters (geoopt)')
+    parser.add_argument(
+        '--geoopt_eps',
+        type=float,
+        default=1e-5,
+        help='epsilon for geoopt RiemannianAdam denominator stability')
+    parser.add_argument(
+        '--geoopt_stabilize',
+        type=int,
+        default=1,
+        help='apply manifold stabilization every N steps (1 = every step)')
+    parser.add_argument(
+        '--quantizer_grad_clip',
+        type=float,
+        default=0.05,
+        help='max norm for quantizer/codebook gradients before global clipping')
+    parser.add_argument(
+        '--manifold_grad_clip',
+        type=float,
+        default=0.02,
+        help='max norm for manifold quantizer gradients before optimizer step')
+    parser.add_argument(
+        '--warmup_epochs_g',
+        type=int,
+        default=0,
+        help='number of linear warmup epochs for generator LR scheduler')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -192,9 +293,9 @@ def get_args():
         args.PATH = args.resume_path  # direcly use the old model path
     else:
         args.PATH = os.path.join(args.PATH, time_str)
-    args.save_dir = os.path.join(args.save_dir, time_str)
+    # Unify save_dir into PATH (like MNIST VQ-VAE)
+    args.save_dir = args.PATH
     os.makedirs(args.PATH, exist_ok=True)
-    os.makedirs(args.save_dir, exist_ok=True)
     return args
 
 
@@ -255,7 +356,8 @@ def main_worker(local_rank, args):
     logger = Logger(args)
     # 240倍下采
     soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
-                              ema=args.ema, kmeans_init=args.kmeans_init)
+                              ema=args.ema, kmeans_init=args.kmeans_init,
+                              pre_quant_batchnorm=args.pre_quant_batchnorm)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -348,12 +450,61 @@ def main_worker(local_rank, args):
     #     optimizer_g = None
         
     if args.c > 0:
-        optimizer_g = geoopt.optim.RiemannianAdam(soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
+        manifold_params = []
+        euclidean_params = []
+        for p in soundstream.parameters():
+            if hasattr(p, "manifold"):
+                manifold_params.append(p)
+            else:
+                euclidean_params.append(p)
+        print(f"Manifold params: {len(manifold_params)}")
+        
+        param_groups = []
+        if len(manifold_params) > 0:
+            # Conservative betas for manifold states to reduce exp_avg instability.
+            param_groups.append({"params": manifold_params, "lr": args.lr_manifold, "betas": (0.0, 0.95), "eps": args.geoopt_eps})
+        if len(euclidean_params) > 0:
+            param_groups.append({"params": euclidean_params, "lr": args.lr_g, 'betas': (0.5, 0.9)})
+
+        print(
+            f"Geoopt groups: manifold={len(manifold_params)}, "
+            f"euclidean={len(euclidean_params)}, lr_manifold={args.lr_manifold:.2e}, lr_g={args.lr_g:.2e}, "
+            f"eps={args.geoopt_eps:.1e}, stabilize={args.geoopt_stabilize}, "
+            f"quantizer_grad_clip={args.quantizer_grad_clip:.2e}, manifold_grad_clip={args.manifold_grad_clip:.2e}"
+        )
+        optimizer_g = geoopt.optim.RiemannianAdam(
+            param_groups,
+            #lr=args.lr_g,
+            #betas=(0.5, 0.9),
+            #eps=args.geoopt_eps,
+            #stabilize=args.geoopt_stabilize,
+        )
     else:
         optimizer_g = torch.optim.AdamW(
-            soundstream.parameters(), lr=3e-4, betas=(0.5, 0.9))
-    lr_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
+            soundstream.parameters(), lr=args.lr_g, betas=(0.5, 0.9))
+        print('AdamW initialised', args.lr_g)
+
+    # Cosine annealing
+    cosine_scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer_g,
+        T_max=args.N_EPOCHS - args.warmup_epochs_g,  # duration AFTER warmup
+        eta_min=1e-6  # optional: minimum LR
+    )
+
+    exp_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optimizer_g, gamma=0.999)
+
+    if args.warmup_epochs_g > 0:
+        # Warmup + exponential decay for generator LR
+        warmup_scheduler_g = torch.optim.lr_scheduler.LinearLR(
+            optimizer_g, start_factor=1e-3, total_iters=args.warmup_epochs_g)
+        lr_scheduler_g = torch.optim.lr_scheduler.SequentialLR(
+            optimizer_g,
+            schedulers=[warmup_scheduler_g, cosine_scheduler_g],
+            milestones=[args.warmup_epochs_g])
+    else:
+        lr_scheduler_g = exp_scheduler_g
+
     optimizer_d = torch.optim.AdamW(
         itertools.chain(stft_disc.parameters(),
                         msd.parameters(), mpd.parameters()),
@@ -378,16 +529,33 @@ def main_worker(local_rank, args):
 
 def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
           optimizer_g, optimizer_d, lr_scheduler_g, lr_scheduler_d, logger):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     from academicodec.visualization import fit_pca, plot_codes, create_gif
-    pca_fitted = False
-    pca_model = None
+    codebook_plots_dir = os.path.join(args.PATH, "codebook_plots")
     print('args ', args.global_rank)
     print('All arguments:')
     for k, v in vars(args).items():
         print(f'  {k}: {v}')
+
+    # Save config to checkpoint directory (rank 0 only)
+    if not args.distributed or dist.get_rank() == 0:
+        config_path = os.path.join(args.PATH, "config.py")
+        with open(config_path, "w") as f:
+            f.write("# Training hyperparameters\n")
+            for k, v in vars(args).items():
+                f.write(f"{k} = {v!r}\n")
+        print(f"Config saved to: {config_path}")
+
     best_val_loss = float("inf")
     best_val_epoch = -1
     global_step = 0
+    pca_model = None
+    history = {
+        "train_rec": [], "train_g": [], "train_d": [], "train_com": [],
+        "val_rec": [], "val_g": [], "val_d": [], "val_com": [],
+    }
     for epoch in range(args.st_epoch, args.N_EPOCHS + 1):
         soundstream.train()
         stft_disc.train()
@@ -399,6 +567,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         train_rec_loss = 0.0
         train_loss_g = 0.0
         train_commit_loss = 0.0
+        grad_norms_g = []
+        grad_norms_d = []
         k_iter = 0
         if args.distributed:
             train_loader.sampler.set_epoch(epoch)
@@ -421,21 +591,15 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 #         print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x OK (max={G_x.abs().max().item():.4f}), commit_loss={commit_loss.item():.4f}", file=sys.stderr, flush=True)
                 # --- end NaN debug ---
                 if optimizer_idx == 0:
-                    # check codebook visualization
-                    if not pca_fitted:
-                        codebook_module = soundstream.module.quantizer.vq.layers[args.codebook_number]._codebook if args.distributed else soundstream.quantizer.vq.layers[args.codebook_number]._codebook
-                        if hasattr(codebook_module, "inited") and codebook_module.inited:
-                            codes = codebook_module.embed.detach().cpu()
-                            if not args.distributed or dist.get_rank() == 0:
-                                pca_model = fit_pca(codes, args.c)
-                                os.makedirs(os.path.join(args.save_dir, "codebook_plots"), exist_ok=True)
-                            pca_fitted = True
-                            
-                    if pca_fitted and (global_step % args.number_of_steps == 0):
+                    # Codebook visualization: refit PCA each time for accurate projection
+                    if global_step % args.number_of_steps == 0:
                         if not args.distributed or dist.get_rank() == 0:
                             codebook_module = soundstream.module.quantizer.vq.layers[args.codebook_number]._codebook if args.distributed else soundstream.quantizer.vq.layers[args.codebook_number]._codebook
-                            codes = codebook_module.embed.detach().cpu()
-                            plot_codes(codes, pca_model, args.c, global_step, os.path.join(args.save_dir, "codebook_plots"))
+                            if hasattr(codebook_module, "inited") and codebook_module.inited:
+                                codes = codebook_module.embed.detach().cpu()
+                                pca_model = fit_pca(codes, args.c)
+                                os.makedirs(codebook_plots_dir, exist_ok=True)
+                                plot_codes(codes, pca_model, args.c, global_step, codebook_plots_dir)
 
                     # update generator
                     y_disc_r, fmap_r = stft_disc(x_wav.contiguous())
@@ -469,10 +633,52 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_adv_g_loss += adv_g_loss.item()
                     train_feat_loss += feat_loss.item()
                     train_rec_loss += rec_loss.item()
+
+                    # Debug check: catch non-finite quantizer/codebook params before this update.
+                    # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/pre_backward")
                     optimizer_g.zero_grad()
                     total_loss_g.backward()
-                    torch.nn.utils.clip_grad_norm_(soundstream.parameters(), max_norm=1.0)
+
+                    # Track generator gradient norm
+                    _g_grads = [p.grad.detach().flatten() for p in soundstream.parameters() if p.grad is not None]
+                    if _g_grads:
+                        grad_norms_g.append(torch.cat(_g_grads).norm().item())
+
+                    # Debug check: detect non-finite gradients produced by backward.
+                    # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/post_backward")
+
+                    # Targeted clipping to prevent manifold optimizer state (exp_avg) from blowing up.
+                    # q_grad_norm = clip_named_grad_norm(
+                    #     soundstream,
+                    #     max_norm=args.quantizer_grad_clip,
+                    #     include_quantizer=True,
+                    #     manifold_only=False,
+                    # )
+                    # m_grad_norm = clip_named_grad_norm(
+                    #     soundstream,
+                    #     max_norm=args.manifold_grad_clip,
+                    #     include_quantizer=True,
+                    #     manifold_only=True,
+                    # )
+                    # if (k_iter <= 20) and (not args.distributed or dist.get_rank() == 0):
+                    #     print(
+                    #         f"grad_clip iter={k_iter}: quantizer_norm={q_grad_norm:.4e}, "
+                    #         f"manifold_quantizer_norm={m_grad_norm:.4e}",
+                    #         flush=True,
+                    #     )
+
+                    # torch.nn.utils.clip_grad_norm_(soundstream.parameters(), max_norm=1.0)
                     optimizer_g.step()
+
+                    # Debug check: detect non-finite optimizer state for quantizer/codebook tensors.
+                    # check_quantizer_optimizer_state_finite(
+                    #     soundstream,
+                    #     optimizer_g,
+                    #     f"iter={k_iter}/gen/post_step_optimizer_state",
+                    # )
+
+                    # Debug check: detect first non-finite values introduced by optimizer step.
+                    # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/post_step")
                 else:
                     # update discriminator
                     y_disc_r_det, fmap_r_det = stft_disc(x.detach())
@@ -492,8 +698,16 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_loss_d += loss_d.item()
                     optimizer_d.zero_grad()
                     loss_d.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        itertools.chain(stft_disc.parameters(), msd.parameters(), mpd.parameters()), max_norm=1.0)
+
+                    # Track discriminator gradient norm
+                    _d_grads = [p.grad.detach().flatten()
+                                for p in itertools.chain(stft_disc.parameters(), msd.parameters(), mpd.parameters())
+                                if p.grad is not None]
+                    if _d_grads:
+                        grad_norms_d.append(torch.cat(_d_grads).norm().item())
+
+                    # torch.nn.utils.clip_grad_norm_(
+                    #     itertools.chain(stft_disc.parameters(), msd.parameters(), mpd.parameters()), max_norm=1.0)
                     optimizer_d.step()
             train_pbar.set_postfix(
                 epoch=epoch,
@@ -511,11 +725,20 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 logger.log_info(message)
         lr_scheduler_g.step()
         lr_scheduler_d.step()
+        avg_train_rec = train_rec_loss / len(train_loader)
+        avg_train_g = train_loss_g / len(train_loader)
+        avg_train_d = train_loss_d / len(train_loader)
+        avg_train_com = (train_commit_loss / len(train_loader)).item() if torch.is_tensor(train_commit_loss) else train_commit_loss / len(train_loader)
+        # Print mean gradient norms for the epoch
+        mean_grad_g = sum(grad_norms_g) / len(grad_norms_g) if grad_norms_g else 0.0
+        mean_grad_d = sum(grad_norms_d) / len(grad_norms_d) if grad_norms_d else 0.0
+        if not args.distributed or dist.get_rank() == 0:
+            print(f"[Epoch {epoch}] Mean grad norm  —  generator: {mean_grad_g:.4e}  |  discriminator: {mean_grad_d:.4e}", flush=True)
         message = '<epoch:{:d}, <total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, adversarial_loss_train:{:.4f}, feature_loss_train:{:.4f}, commit_loss_train:{:.4f}>'.format(
-            epoch, train_loss_g / len(train_loader), train_rec_loss /
-            len(train_loader), train_adv_g_loss / len(train_loader),
+            epoch, avg_train_g, avg_train_rec,
+            train_adv_g_loss / len(train_loader),
             train_feat_loss / len(train_loader),
-            train_commit_loss / len(train_loader))
+            avg_train_com)
         logger.log_info(message)
         with torch.no_grad():
             soundstream.eval()
@@ -540,8 +763,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)
                     # G_x is the reconstructed waveform, codes is the indices
+                    G_x, commit_loss, last_layer, codes = soundstream(x_wav)
                     if optimizer_idx == 0:
-                        G_x, commit_loss, last_layer, codes = soundstream(x_wav)
                         # Tracking Codebook Perplexity
                         # codes shape: [num_quantizers, batch, time]
                         if codes_hist is None:
@@ -586,7 +809,6 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                         valid_feat_loss += feat_loss.item()
                         valid_rec_loss += rec_loss.item()
                     else:
-                        G_x, _, _, _ = soundstream(x_wav)
                         y_disc_r_det, fmap_r_det = stft_disc(
                             x_wav.contiguous().detach())
                         y_disc_gen_det, fmap_gen_det = stft_disc(
@@ -618,41 +840,108 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
                 perplexities = torch.exp2(entropy).tolist()
 
+            avg_val_rec = valid_rec_loss / len(valid_loader)
+            avg_val_g = valid_loss_g / len(valid_loader)
+            avg_val_d = valid_loss_d / len(valid_loader)
+            avg_val_com = (valid_commit_loss / len(valid_loader)).item() if torch.is_tensor(valid_commit_loss) else valid_commit_loss / len(valid_loader)
+
+            # Accumulate loss history
+            history["train_rec"].append(avg_train_rec)
+            history["train_g"].append(avg_train_g)
+            history["train_d"].append(avg_train_d)
+            history["train_com"].append(avg_train_com)
+            history["val_rec"].append(avg_val_rec)
+            history["val_g"].append(avg_val_g)
+            history["val_d"].append(avg_val_d)
+            history["val_com"].append(avg_val_com)
+
+            # Only save checkpoints after reaching 75% of total epochs
+            threshold_epoch = int(0.75 * args.N_EPOCHS)
             if not args.distributed or dist.get_rank() == 0:
-                best_model = soundstream.state_dict().copy()
-                latest_model_soundstream = soundstream.state_dict().copy()
-                latest_model_dis = stft_disc.state_dict().copy()
-                latest_mpd = mpd.state_dict().copy()
-                latest_msd = msd.state_dict().copy()
-                if valid_rec_loss < best_val_loss:
-                    best_val_loss = valid_rec_loss
-                    best_val_epoch = epoch
-                torch.save(best_model,
-                           args.PATH + '/best_' + str(epoch) + '.pth')
-                latest_save = {}
-                latest_save['soundstream'] = latest_model_soundstream
-                latest_save['stft_disc'] = latest_model_dis
-                latest_save['mpd'] = latest_mpd
-                latest_save['msd'] = latest_msd
-                latest_save['epoch'] = epoch
-                latest_save['optimizer_g'] = optimizer_g.state_dict()
-                latest_save['optimizer_d'] = optimizer_d.state_dict()
-                latest_save['lr_scheduler_g'] = lr_scheduler_g.state_dict()
-                latest_save['lr_scheduler_d'] = lr_scheduler_d.state_dict()
-                torch.save(latest_save, args.PATH + '/latest.pth')
-                
+                if epoch >= threshold_epoch:
+                    latest_save = {
+                        'soundstream': soundstream.state_dict(),
+                        'stft_disc': stft_disc.state_dict(),
+                        'mpd': mpd.state_dict(),
+                        'msd': msd.state_dict(),
+                        'epoch': epoch,
+                        'optimizer_g': optimizer_g.state_dict(),
+                        'optimizer_d': optimizer_d.state_dict(),
+                        'lr_scheduler_g': lr_scheduler_g.state_dict(),
+                        'lr_scheduler_d': lr_scheduler_d.state_dict(),
+                    }
+                    torch.save(latest_save, os.path.join(args.PATH, 'latest.pth'))
+
+                    if avg_val_rec < best_val_loss:
+                        best_val_loss = avg_val_rec
+                        best_val_epoch = epoch
+                        torch.save(latest_save, os.path.join(args.PATH, f'best_{epoch}.pth'))
+                        print(f"  ✓ New best model saved (val_rec={avg_val_rec:.5f})")
+                else:
+                    # Still track best for logging even before threshold
+                    if avg_val_rec < best_val_loss:
+                        best_val_loss = avg_val_rec
+                        best_val_epoch = epoch
+
             ppl_str = ", ".join([f"{p:.1f}" for p in perplexities]) if perplexities else "N/A"
 
             message = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, adversarial_loss_valid:{:.4f}, feature_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, valid_loss_d:{:.4f}, ppl:[{}], best_epoch:{:d}>'.format(
-                epoch, valid_loss_g / len(valid_loader), valid_rec_loss /
-                len(valid_loader), valid_adv_g_loss / len(valid_loader),
+                epoch, avg_val_g, avg_val_rec,
+                valid_adv_g_loss / len(valid_loader),
                 valid_feat_loss / len(valid_loader),
-                valid_commit_loss / len(valid_loader),
-                valid_loss_d / len(valid_loader), ppl_str, best_val_epoch)
+                avg_val_com,
+                avg_val_d, ppl_str, best_val_epoch)
             logger.log_info(message)
 
+    # ── End-of-training: codebook GIF + loss curves (rank 0 only) ──
     if not args.distributed or dist.get_rank() == 0:
-        create_gif(os.path.join(args.save_dir, "codebook_plots"), os.path.join(args.save_dir, "codebook_evolution.gif"))
+        # Final codebook snapshot + GIF
+        if pca_model is not None:
+            codebook_module = soundstream.module.quantizer.vq.layers[args.codebook_number]._codebook if args.distributed else soundstream.quantizer.vq.layers[args.codebook_number]._codebook
+            codes = codebook_module.embed.detach().cpu()
+            plot_codes(codes, pca_model, args.c, global_step, codebook_plots_dir)
+        gif_path = os.path.join(args.PATH, "codebook_evolution.gif")
+        create_gif(codebook_plots_dir, gif_path)
+
+        # ── Loss curves ──────────────────────────────────────────────
+        if len(history["train_rec"]) > 0:
+            epochs_range = list(range(args.st_epoch, args.st_epoch + len(history["train_rec"])))
+
+            fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+
+            axes[0, 0].plot(epochs_range, history["train_rec"], label="Train")
+            axes[0, 0].plot(epochs_range, history["val_rec"], label="Val")
+            axes[0, 0].set_title("Reconstruction Loss")
+            axes[0, 0].set_xlabel("Epoch")
+            axes[0, 0].legend()
+            axes[0, 0].grid(True)
+
+            axes[0, 1].plot(epochs_range, history["train_com"], label="Train")
+            axes[0, 1].plot(epochs_range, history["val_com"], label="Val")
+            axes[0, 1].set_title("Commitment Loss")
+            axes[0, 1].set_xlabel("Epoch")
+            axes[0, 1].legend()
+            axes[0, 1].grid(True)
+
+            axes[1, 0].plot(epochs_range, history["train_g"], label="Train")
+            axes[1, 0].plot(epochs_range, history["val_g"], label="Val")
+            axes[1, 0].set_title("Generator Loss")
+            axes[1, 0].set_xlabel("Epoch")
+            axes[1, 0].legend()
+            axes[1, 0].grid(True)
+
+            axes[1, 1].plot(epochs_range, history["train_d"], label="Train")
+            axes[1, 1].plot(epochs_range, history["val_d"], label="Val")
+            axes[1, 1].set_title("Discriminator Loss")
+            axes[1, 1].set_xlabel("Epoch")
+            axes[1, 1].legend()
+            axes[1, 1].grid(True)
+
+            fig.tight_layout()
+            loss_fig_path = os.path.join(args.PATH, "loss_curves.png")
+            fig.savefig(loss_fig_path, dpi=150)
+            plt.close(fig)
+            print(f"Loss curves saved to: {loss_fig_path}")
 
 
 

@@ -77,6 +77,10 @@ def get_parser():
         # default for 16k_320d
         default=12,
         help='target_bw of net3.py')
+    parser.add_argument(
+        '--pre_quant_batchnorm',
+        action='store_true',
+        help='apply BatchNorm1d on encoder output right before quantization')
 
     return parser
 
@@ -167,7 +171,8 @@ def test_batch():
         D=512,
         ratios=args.ratios,
         sample_rate=args.sr,
-        target_bandwidths=args.target_bandwidths)
+        target_bandwidths=args.target_bandwidths,
+        pre_quant_batchnorm=args.pre_quant_batchnorm)
     parameter_dict = torch.load(args.resume_path)
     new_state_dict = OrderedDict()
     # k 为 module.xxx.weight, v 为权重

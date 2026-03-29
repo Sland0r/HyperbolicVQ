@@ -137,6 +137,10 @@ def get_args():
         '--ema',
         action='store_true',
         help='use EMA for codebook (default: False)')
+    parser.add_argument(
+        '--pre_quant_batchnorm',
+        action='store_true',
+        help='apply BatchNorm1d on encoder output right before quantization')
     args = parser.parse_args()
     
     if 'SLURM_JOB_ID' in os.environ:
@@ -179,7 +183,13 @@ def main_worker(local_rank, args):
     args.distributed = args.world_size > 1
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c, ema=args.ema)
+    soundstream = SoundStream(
+        n_filters=32,
+        D=512,
+        ratios=args.ratios,
+        c=args.c,
+        ema=args.ema,
+        pre_quant_batchnorm=args.pre_quant_batchnorm)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)

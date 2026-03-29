@@ -14,4 +14,5 @@ module load Anaconda3/2025.06-1
 
 #conda create -n vaes python=3.10
 source activate vaes
-pip install scikit-learn
+# install from requirements.txt
+pip install -r requirements.txt

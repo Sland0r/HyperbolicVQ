@@ -48,6 +48,29 @@ def check_nan(x, msg):
         sys.exit(1) # Stop immediately so we can see the trace and print
     return x
 
+
+def assert_finite(x: tp.Any, name: str):
+    if not torch.is_tensor(x):
+        return x
+    if torch.isfinite(x).all():
+        return x
+
+    nan_count = torch.isnan(x).sum().item()
+    posinf_count = torch.isposinf(x).sum().item()
+    neginf_count = torch.isneginf(x).sum().item()
+    finite_mask = torch.isfinite(x)
+    bad_idx = (~finite_mask).nonzero(as_tuple=False)
+    first_bad = bad_idx[0].tolist() if bad_idx.numel() > 0 else []
+    finite_vals = x[finite_mask]
+    finite_min = finite_vals.min().item() if finite_vals.numel() > 0 else float("nan")
+    finite_max = finite_vals.max().item() if finite_vals.numel() > 0 else float("nan")
+    raise RuntimeError(
+        "Non-finite tensor detected at "
+        f"{name}: shape={tuple(x.shape)}, dtype={x.dtype}, "
+        f"nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
+        f"first_bad_index={first_bad}, finite_min={finite_min:.6g}, finite_max={finite_max:.6g}"
+    )
+
 def mobius_add(x, y, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True) # "mobius_add x2"
     y2 = y.pow(2).sum(dim=-1, keepdim=True) # "mobius_add y2"
@@ -89,25 +112,11 @@ def log_map0(y, c):
     scale = torch.atanh((sqrt_c * norm).clamp_max(1 - 1e-5)) / (sqrt_c * norm.clamp_min(1e-5)) # "log_map0 scale"
     return y * scale # "log_map0 result"
 
-def project(x, c, eps=1e-7):
+def project(x, c, eps=1e-5):
     """Project x onto the open Poincaré ball of radius 1/sqrt(c)."""
-    max_norm = 1.0 / (c ** 0.5) - eps
-    norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-5) # "project norm"
-    return torch.where(norm > max_norm, x * (max_norm / (norm + eps)), x) # "project result"
-
-# def _project(x, k, dim: int = -1, eps: float = -1.0):
-#     if eps < 0:
-#         if x.dtype == torch.float32:
-#             eps = 4e-3
-#         else:
-#             eps = 1e-5
-#     maxnorm = (1 - eps) / (sabs(k) ** 0.5)
-#     maxnorm = torch.where(k.lt(0), maxnorm, k.new_full((), 1e15))
-#     norm = x.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
-#     cond = norm > maxnorm
-#     projected = x / norm * maxnorm
-#     return torch.where(cond, projected, x)
-
+    max_norm = (1.0 - eps) / (c ** 0.5) 
+    norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-15) # "project norm"
+    return torch.where(norm > max_norm, x * (max_norm / norm), x) # "project result"
 
 def exp_map(x, v, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
@@ -120,12 +129,59 @@ def log_map(x, y, c):
     return log_map0(mobius_add(-x, y, c), c) * 2 / lambda_x # "log_map result"
 
 
+def conformal_factor(x, c):
+    """Conformal factor λ_c^x = 2 / (1 - c ||x||^2)."""
+    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
+    return 2.0 / (1.0 - c * x2)
+
+def weighted_midpoint_op(x, w, c):
+    """Weighted midpoint operation [x, w]_c (Eq. 43).
+    [x, w]_c = w * λ_c^x * x / (1 + sqrt(1 + c * w^2 * (λ_c^x)^2 * ||x||^2))
+    """
+    lam = conformal_factor(x, c)            # (... , 1)
+    x_sq_norm = x.pow(2).sum(dim=-1, keepdim=True)  # (... , 1)
+    num = w * lam * x
+    denom = 1.0 + torch.sqrt((1.0 + c * w**2 * lam**2 * x_sq_norm).clamp_min(1e-10))
+    return num / denom
+
+def einstein_midpoint(z, w, c):
+    """Einstein midpoint of points z with indicator weights w (Eq. 41).
+    μ = (1/2) ⊗_c ( Σ w_i λ_c^{z_i} z_i / Σ |w_i| (λ_c^{z_i} - 1) )
+    Args:
+        z: (N, D) points on the Poincaré ball
+        w: (N, K) one-hot assignment weights (w_ij = 1 if z_i -> c_j)
+        c: curvature
+    Returns:
+        (K, D) midpoints, one per centroid
+    """
+    lam = conformal_factor(z, c)  # (N, 1)
+    # Numerator: Σ_i w_ij * λ_c^{z_i} * z_i  for each centroid j
+    weighted_z = lam * z          # (N, D) element-wise
+    # w.T is (K, N), weighted_z is (N, D)
+    num = w.t() @ weighted_z      # (K, D)
+    # Denominator: Σ_i |w_ij| * (λ_c^{z_i} - 1)  for each centroid j
+    den = w.t() @ (lam - 1.0)     # (K, 1)
+    den = den.clamp_min(1e-8)
+    # The argument to the half-Möbius scaling: num / den
+    v = num / den                 # (K, D)
+    # (1/2) ⊗_c v  =  exp_map0( (1/2) * log_map0(v, c), c )
+    # But for the Poincaré ball, s ⊗_c v = tanh(s * atanh(√c ||v||)) / (√c ||v||) * v
+    sqrt_c = c ** 0.5
+    v_norm = v.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    half_scaled = torch.tanh(0.5 * torch.atanh((sqrt_c * v_norm).clamp_max(1 - 1e-5))) / (sqrt_c * v_norm)
+    mu = half_scaled * v
+    return project(mu, c)
+
+
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     return val if val is not None else d
 
 
 def ema_inplace(moving_avg, new, decay: float):
+    #assert_finite(moving_avg, "ema_inplace/moving_avg(before)")
+    #assert_finite(new, "ema_inplace/new")
     moving_avg.data.mul_(decay).add_(new, alpha=(1 - decay))
+    #assert_finite(moving_avg, "ema_inplace/moving_avg(after)")
 
 
 def laplace_smoothing(x, n_categories: int, epsilon: float=1e-5):
@@ -250,24 +306,33 @@ class EuclideanCodebook(nn.Module):
             broadcast_tensors([self.embed])
 
     def replace_(self, samples, mask):
+        #assert_finite(samples, "replace_/samples")
+        #assert_finite(self.embed, "replace_/embed(before)")
         modified_codebook = torch.where(
             mask[..., None], # true when codebook is dead
             sample_vectors(samples, self.codebook_size), self.embed)
         if self.c > 0:
             modified_codebook = project(modified_codebook, self.c)
+        #assert_finite(modified_codebook, "replace_/modified_codebook")
         self.embed.data.copy_(modified_codebook)
+        #assert_finite(self.embed, "replace_/embed(after)")
 
     def expire_codes_(self, batch_samples):
         if self.threshold_ema_dead_code == 0:
             return
 
+        #assert_finite(self.cluster_size, "expire_codes_/cluster_size(before)")
+        #assert_finite(batch_samples, "expire_codes_/batch_samples(before)")
         expired_codes = self.cluster_size < self.threshold_ema_dead_code # number of clusters = codebook size
         if not torch.any(expired_codes):
             return
 
         batch_samples = rearrange(batch_samples, "... d -> (...) d") # likely not necessary, already in that form
+        #assert_finite(batch_samples, "expire_codes_/batch_samples(flat)")
         self.replace_(batch_samples, mask=expired_codes)
+        #assert_finite(self.embed, "expire_codes_/embed(after replace)")
         broadcast_tensors(self.buffers())
+        #assert_finite(self.embed, "expire_codes_/embed(after broadcast)")
 
     def preprocess(self, x):
         x = rearrange(x, "... d -> (...) d")
@@ -307,55 +372,55 @@ class EuclideanCodebook(nn.Module):
     def forward(self, x):
         shape, dtype = x.shape, x.dtype
         x = self.preprocess(x) # (everything, dim)
+        #assert_finite(x, "EuclideanCodebook.forward/x(preprocess)")
 
         self.init_embed_(x)
+        #assert_finite(self.embed, "EuclideanCodebook.forward/embed(after init)")
 
         embed_ind = self.quantize(x) # indices of the closest centroid
         embed_onehot = F.one_hot(embed_ind, self.codebook_size).type(dtype)
         embed_ind = self.postprocess_emb(embed_ind, shape) # back to normal shape
         quantize = self.dequantize(embed_ind) # quantized x
+        #assert_finite(quantize, "EuclideanCodebook.forward/quantize")
 
         if self.training:
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
-            self.expire_codes_(x)
+            #if self.ema:
+            self.expire_codes_(x) # move unused codes close to random samples
+            #assert_finite(self.embed, "EuclideanCodebook.forward/embed(after expire)")
             ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
+            #assert_finite(self.cluster_size, "EuclideanCodebook.forward/cluster_size(after ema)")
 
             if not self.ema:
                 # Skip EMA: codebook is nn.Parameter, updated via optimizer
                 # TODO: might add reset for dead codes here
                 pass
             elif self.c > 0:
-                # Compute smoothed denominator for EMA
-                cluster_size = (
-                    laplace_smoothing(self.cluster_size, self.codebook_size,
-                                      self.epsilon) * self.cluster_size.sum())
-
-                # Map x to the tangent space of their assigned centroids
-                embed_ind_flat = embed_ind.view(-1)
-                embedded = self.embed[embed_ind_flat] # Contextual centroids per batch item
-                tangent_x = log_map(embedded, x, self.c)
-                
-                # Sum the tangent vectors per centroid
-                tangent_sum = torch.zeros_like(self.embed)
-                tangent_sum.scatter_add_(0, repeat(embed_ind_flat, "n -> n d", d=self.embed.size(-1)), tangent_x)
-                
-                # The effective step size is scaled by (1 - decay) and averaged by the smoothed cluster size
-                step = (1 - self.decay) * (tangent_sum / cluster_size.unsqueeze(1))
-                
-                # Move the active centroids along the geodesic by the step amount
-                embed_normalized = exp_map(self.embed, step, self.c)
-                embed_normalized = project(embed_normalized, self.c)
+                # Einstein midpoint EMA update (Eq. 41-43)
+                # 1. Compute Einstein midpoint μ_j of assigned samples (Eq. 41)
+                with torch.no_grad():
+                    mu = einstein_midpoint(x, embed_onehot, self.c)
+                    # 2. Weighted midpoint EMA (Eq. 42):
+                    #    c_j^{t+1} = proj( [c_j, β]_c  ⊕_c  [μ_j, 1-β]_c )
+                    #    where β = decay
+                    old_part = weighted_midpoint_op(self.embed, self.decay, self.c)
+                    new_part = weighted_midpoint_op(mu, 1.0 - self.decay, self.c)
+                    embed_normalized = project(mobius_add(old_part, new_part, self.c), self.c)
                 self.embed.data.copy_(embed_normalized)
 
             else:
                 embed_sum = x.t() @ embed_onehot
+                #assert_finite(embed_sum, "EuclideanCodebook.forward/embed_sum")
                 ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
                 cluster_size = (
                     laplace_smoothing(self.cluster_size, self.codebook_size,
                                       self.epsilon) * self.cluster_size.sum())
+                #assert_finite(cluster_size, "EuclideanCodebook.forward/cluster_size(smoothed)")
                 embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
+                #assert_finite(embed_normalized, "EuclideanCodebook.forward/embed_normalized(euclidean)")
                 self.embed.data.copy_(embed_normalized)
+                #assert_finite(self.embed, "EuclideanCodebook.forward/embed(after update)")
 
         return quantize, embed_ind
 
@@ -387,12 +452,13 @@ class VectorQuantization(nn.Module):
             kmeans_init: bool=True,
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2,
-            commitment_weight: float=1.,
+            commitment_weight: float=0.25,
             c: float=0.,
             ema: bool=True, ):
         super().__init__()
         self.c = c
         self.ema = ema
+        self.alpha = 1.0
         _codebook_dim: int = default(codebook_dim, dim)
 
         requires_projection = _codebook_dim != dim
@@ -466,7 +532,7 @@ class VectorQuantization(nn.Module):
                     codebook_loss = hyperbolic_distance_sq(x.detach(), quantize_raw, self.c).mean()
                 else:
                     codebook_loss = F.mse_loss(x.detach(), quantize_raw)
-                loss = loss + codebook_loss
+                loss = loss + codebook_loss * self.alpha
 
         quantize = self.project_out(quantize)
         quantize = rearrange(quantize, "b n d -> b d n")
@@ -483,7 +549,6 @@ class ResidualVectorQuantization(nn.Module):
         self.c = kwargs.get("c", 0.0)
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
-        print("EMA", kwargs.get("ema", False))
 
     def forward(self, x, n_q: tp.Optional[int]=None):
         if self.c > 0:
