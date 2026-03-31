@@ -47,67 +47,6 @@ def getModelSize(model):
     print('模型总大小为：{:.3f}MB'.format(all_size))
     return (param_size, param_sum, buffer_size, buffer_sum, all_size)
 
-
-def _raise_non_finite(name, tensor, stage):
-    finite_mask = torch.isfinite(tensor)
-    bad_idx = (~finite_mask).nonzero(as_tuple=False)
-    first_bad = bad_idx[0].tolist() if bad_idx.numel() > 0 else []
-    nan_count = torch.isnan(tensor).sum().item()
-    posinf_count = torch.isposinf(tensor).sum().item()
-    neginf_count = torch.isneginf(tensor).sum().item()
-    finite_vals = tensor[finite_mask]
-    finite_min = finite_vals.min().item() if finite_vals.numel() > 0 else float('nan')
-    finite_max = finite_vals.max().item() if finite_vals.numel() > 0 else float('nan')
-    raise RuntimeError(
-        f"Non-finite detected at {stage}: {name}, shape={tuple(tensor.shape)}, "
-        f"dtype={tensor.dtype}, nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
-        f"first_bad_index={first_bad}, finite_min={finite_min:.6g}, finite_max={finite_max:.6g}"
-    )
-
-
-def check_quantizer_finite(module, stage):
-    for name, param in module.named_parameters():
-        if 'quantizer' not in name and 'codebook' not in name:
-            continue
-        if not torch.isfinite(param.data).all():
-            _raise_non_finite(name, param.data, stage)
-        if param.grad is not None and not torch.isfinite(param.grad).all():
-            _raise_non_finite(f"{name}.grad", param.grad, stage)
-
-
-def check_quantizer_optimizer_state_finite(module, optimizer, stage):
-    tracked = {
-        param: name for name, param in module.named_parameters()
-        if ('quantizer' in name or 'codebook' in name)
-    }
-    for param, state in optimizer.state.items():
-        name = tracked.get(param)
-        if name is None:
-            continue
-        for state_key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
-            tensor = state.get(state_key)
-            if torch.is_tensor(tensor) and not torch.isfinite(tensor).all():
-                _raise_non_finite(f"optimizer_state[{state_key}]/{name}", tensor, stage)
-
-
-def clip_named_grad_norm(module, max_norm, *, include_quantizer=True, manifold_only=False):
-    params = []
-    for name, param in module.named_parameters():
-        if param.grad is None:
-            continue
-        if include_quantizer and ('quantizer' not in name and 'codebook' not in name):
-            continue
-        if manifold_only and not hasattr(param, 'manifold'):
-            continue
-        params.append(param)
-    if len(params) == 0:
-        return 0.0
-    total_norm = torch.nn.utils.clip_grad_norm_(params, max_norm=max_norm)
-    if torch.is_tensor(total_norm):
-        total_norm = total_norm.item()
-    return float(total_norm)
-
-
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -322,31 +261,6 @@ def main():
         args.dist_url,
         args=(args, ))
 
-
-def add_nan_hook(model, model_name):
-    def check_nan(name, x):
-        if torch.is_tensor(x) and torch.isnan(x).any():
-            print(f"NaN DETECTED in {name}", flush=True)
-            import sys
-            sys.exit(1)
-            
-    def hook(module, input, output):
-        module_name = f"{model_name}.{module.__class__.__name__}"
-        if isinstance(output, tuple):
-            for i, out in enumerate(output):
-                check_nan(f"{module_name} (output {i})", out)
-        elif isinstance(output, list):
-            for i, out in enumerate(output):
-                check_nan(f"{module_name} (output {i})", out)
-        elif isinstance(output, dict):
-            for k, out in output.items():
-                check_nan(f"{module_name} (output {k})", out)
-        else:
-            check_nan(module_name, output)
-
-    for name, submodule in model.named_modules():
-        submodule.register_forward_hook(hook)
-
 def main_worker(local_rank, args):
     args.local_rank = local_rank
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
@@ -415,40 +329,6 @@ def main_worker(local_rank, args):
         num_workers=8,
         sampler=valid_sampler)
         
-    # manifold_params = []
-    # euclidean_params = []
-
-    # for p in soundstream.parameters():
-    #     if hasattr(p, "manifold"):
-    #         manifold_params.append(p)
-    #     else:
-    #         euclidean_params.append(p)
-
-    # print(f"Manifold params: {len(manifold_params)}")
-
-    # if args.c > 0:
-    #     optimizer_g = geoopt.optim.RiemannianAdam(
-    #         manifold_params,
-    #         lr=3e-4,
-    #         betas=(0.5, 0.9),
-    #         eps=1e-8
-    #     )
-
-    #     optimizer_e = torch.optim.AdamW(
-    #         euclidean_params,
-    #         lr=3e-4,
-    #         betas=(0.5, 0.9),
-    #         weight_decay=1e-4
-    #     )
-    # else:
-    #     optimizer_e = torch.optim.AdamW(
-    #         soundstream.parameters(),
-    #         lr=3e-4,
-    #         betas=(0.5, 0.9),
-    #         weight_decay=1e-4
-    #     )
-    #     optimizer_g = None
-        
     if args.c > 0:
         manifold_params = []
         euclidean_params = []
@@ -474,10 +354,6 @@ def main_worker(local_rank, args):
         )
         optimizer_g = geoopt.optim.RiemannianAdam(
             param_groups,
-            #lr=args.lr_g,
-            #betas=(0.5, 0.9),
-            #eps=args.geoopt_eps,
-            #stabilize=args.geoopt_stabilize,
         )
     else:
         optimizer_g = torch.optim.AdamW(
@@ -503,7 +379,7 @@ def main_worker(local_rank, args):
             schedulers=[warmup_scheduler_g, cosine_scheduler_g],
             milestones=[args.warmup_epochs_g])
     else:
-        lr_scheduler_g = exp_scheduler_g
+        lr_scheduler_g = cosine_scheduler_g
 
     optimizer_d = torch.optim.AdamW(
         itertools.chain(stft_disc.parameters(),
@@ -553,8 +429,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
     global_step = 0
     pca_model = None
     history = {
-        "train_rec": [], "train_g": [], "train_d": [], "train_com": [],
-        "val_rec": [], "val_g": [], "val_d": [], "val_com": [],
+        "train_rec": [], "train_g": [], "train_d": [], "train_com": [], "train_feat": [],
+        "val_rec": [], "val_g": [], "val_d": [], "val_com": [], "val_feat": [],
     }
     for epoch in range(args.st_epoch, args.N_EPOCHS + 1):
         soundstream.train()
@@ -580,16 +456,6 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
                 G_x, commit_loss, last_layer, _ = soundstream(x_wav)
-                # --- NaN debug ---
-                # import sys
-                # if torch.isnan(G_x).any():
-                #     print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x has NaN", file=sys.stderr, flush=True)
-                # if torch.isnan(commit_loss).any():
-                #     print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: commit_loss={commit_loss.item()} has NaN", file=sys.stderr, flush=True)
-                # if not torch.isnan(G_x).any() and not torch.isnan(commit_loss).any():
-                #     if k_iter <= 10:
-                #         print(f"[NaN DEBUG] iter={k_iter} opt={optimizer_idx}: G_x OK (max={G_x.abs().max().item():.4f}), commit_loss={commit_loss.item():.4f}", file=sys.stderr, flush=True)
-                # --- end NaN debug ---
                 if optimizer_idx == 0:
                     # Codebook visualization: refit PCA each time for accurate projection
                     if global_step % args.number_of_steps == 0:
@@ -643,42 +509,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     _g_grads = [p.grad.detach().flatten() for p in soundstream.parameters() if p.grad is not None]
                     if _g_grads:
                         grad_norms_g.append(torch.cat(_g_grads).norm().item())
-
-                    # Debug check: detect non-finite gradients produced by backward.
-                    # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/post_backward")
-
-                    # Targeted clipping to prevent manifold optimizer state (exp_avg) from blowing up.
-                    # q_grad_norm = clip_named_grad_norm(
-                    #     soundstream,
-                    #     max_norm=args.quantizer_grad_clip,
-                    #     include_quantizer=True,
-                    #     manifold_only=False,
-                    # )
-                    # m_grad_norm = clip_named_grad_norm(
-                    #     soundstream,
-                    #     max_norm=args.manifold_grad_clip,
-                    #     include_quantizer=True,
-                    #     manifold_only=True,
-                    # )
-                    # if (k_iter <= 20) and (not args.distributed or dist.get_rank() == 0):
-                    #     print(
-                    #         f"grad_clip iter={k_iter}: quantizer_norm={q_grad_norm:.4e}, "
-                    #         f"manifold_quantizer_norm={m_grad_norm:.4e}",
-                    #         flush=True,
-                    #     )
-
-                    # torch.nn.utils.clip_grad_norm_(soundstream.parameters(), max_norm=1.0)
                     optimizer_g.step()
-
-                    # Debug check: detect non-finite optimizer state for quantizer/codebook tensors.
-                    # check_quantizer_optimizer_state_finite(
-                    #     soundstream,
-                    #     optimizer_g,
-                    #     f"iter={k_iter}/gen/post_step_optimizer_state",
-                    # )
-
-                    # Debug check: detect first non-finite values introduced by optimizer step.
-                    # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/post_step")
                 else:
                     # update discriminator
                     y_disc_r_det, fmap_r_det = stft_disc(x.detach())
@@ -706,8 +537,6 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     if _d_grads:
                         grad_norms_d.append(torch.cat(_d_grads).norm().item())
 
-                    # torch.nn.utils.clip_grad_norm_(
-                    #     itertools.chain(stft_disc.parameters(), msd.parameters(), mpd.parameters()), max_norm=1.0)
                     optimizer_d.step()
             train_pbar.set_postfix(
                 epoch=epoch,
@@ -844,16 +673,20 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             avg_val_g = valid_loss_g / len(valid_loader)
             avg_val_d = valid_loss_d / len(valid_loader)
             avg_val_com = (valid_commit_loss / len(valid_loader)).item() if torch.is_tensor(valid_commit_loss) else valid_commit_loss / len(valid_loader)
+            avg_train_feat = train_feat_loss / len(train_loader)
+            avg_val_feat = valid_feat_loss / len(valid_loader)
 
             # Accumulate loss history
             history["train_rec"].append(avg_train_rec)
             history["train_g"].append(avg_train_g)
             history["train_d"].append(avg_train_d)
             history["train_com"].append(avg_train_com)
+            history["train_feat"].append(avg_train_feat)
             history["val_rec"].append(avg_val_rec)
             history["val_g"].append(avg_val_g)
             history["val_d"].append(avg_val_d)
             history["val_com"].append(avg_val_com)
+            history["val_feat"].append(avg_val_feat)
 
             # Only save checkpoints after reaching 75% of total epochs
             threshold_epoch = int(0.75 * args.N_EPOCHS)
@@ -923,9 +756,9 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             axes[0, 1].legend()
             axes[0, 1].grid(True)
 
-            axes[1, 0].plot(epochs_range, history["train_g"], label="Train")
-            axes[1, 0].plot(epochs_range, history["val_g"], label="Val")
-            axes[1, 0].set_title("Generator Loss")
+            axes[1, 0].plot(epochs_range, history["train_feat"], label="Train")
+            axes[1, 0].plot(epochs_range, history["val_feat"], label="Val")
+            axes[1, 0].set_title("Feature Loss")
             axes[1, 0].set_xlabel("Epoch")
             axes[1, 0].legend()
             axes[1, 0].grid(True)

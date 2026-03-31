@@ -97,7 +97,7 @@ class VQVAE2D(nn.Module):
         bins: int = 256,
         c: float = 0.0,
         ema: bool = True,
-        kmeans_init: bool = True,
+        kmeans_init: bool = False,
         in_channels: int = 1,
         img_size: int = 28,
     ):

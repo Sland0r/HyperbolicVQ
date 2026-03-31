@@ -4,6 +4,7 @@ import glob
 import math
 import os
 import time
+import geoopt
 
 import torch
 import torch.nn.functional as F
@@ -15,8 +16,11 @@ from tqdm import tqdm
 def get_args():
     parser = argparse.ArgumentParser(description="Train VQ-VAE")
     # dataset
-    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar100"],
+    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar100", "emnist"],
                         help="dataset to train on")
+    parser.add_argument("--emnist_split", type=str, default="byclass",
+                        choices=["byclass", "bymerge", "balanced", "letters", "digits", "mnist"],
+                        help="EMNIST split (only used when --dataset=emnist)")
     # model
     parser.add_argument("--D", type=int, default=128, help="codebook / latent dimension")
     parser.add_argument("--n_q", type=int, default=4, help="number of residual quantizers")
@@ -27,7 +31,18 @@ def get_args():
     # training
     parser.add_argument("--N_EPOCHS", type=int, default=50, help="number of training epochs")
     parser.add_argument("--BATCH_SIZE", type=int, default=128, help="batch size")
-    parser.add_argument("--lr", type=float, default=3e-4, help="learning rate")
+    parser.add_argument("--lr_g", type=float, default=3e-4, help="learning rate")
+    parser.add_argument("--lr_manifold", type=float, default=1e-3, help="learning rate")
+    parser.add_argument(
+        '--geoopt_eps',
+        type=float,
+        default=1e-5,
+        help='epsilon for geoopt RiemannianAdam denominator stability')
+    parser.add_argument(
+        '--geoopt_stabilize',
+        type=int,
+        default=1,
+        help='apply manifold stabilization every N steps (1 = every step)')
     parser.add_argument("--LAMBDA_COM", type=float, default=1.0, help="commitment loss weight")
     parser.add_argument("--print_freq", type=int, default=100, help="print every N batches")
     parser.add_argument("--codebook_number", type=int, default=0, help="which codebook to visualize")
@@ -56,7 +71,8 @@ def get_args():
     # Set default data_dir based on dataset
     if not args.data_dir:
         base = "/home/acolombo/VAEs/dataset"
-        args.data_dir = os.path.join(base, "MNIST" if args.dataset == "mnist" else "CIFAR100")
+        ds_map = {"mnist": "MNIST", "cifar100": "CIFAR100", "emnist": "EMNIST"}
+        args.data_dir = os.path.join(base, ds_map[args.dataset])
 
     return args
 
@@ -84,12 +100,17 @@ def main():
         in_channels, img_size = 1, 28
         train_data = datasets.MNIST(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.MNIST(root=args.data_dir, train=False, download=True, transform=transform)
+    elif args.dataset == "emnist":
+        in_channels, img_size = 1, 28
+        train_data = datasets.EMNIST(root=args.data_dir, split=args.emnist_split, train=True, download=True, transform=transform)
+        val_data = datasets.EMNIST(root=args.data_dir, split=args.emnist_split, train=False, download=True, transform=transform)
     elif args.dataset == "cifar100":
         in_channels, img_size = 3, 32
         train_data = datasets.CIFAR100(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.CIFAR100(root=args.data_dir, train=False, download=True, transform=transform)
-    train_loader = DataLoader(train_data, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_data, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
+    print(f"Train loader size: {len(train_loader)}")
+    val_loader = DataLoader(val_data, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True)
 
     # ── Model ─────────────────────────────────────────────────────────
     from mnist_vqvae import VQVAE2D, _count_params
@@ -103,8 +124,37 @@ def main():
     total, trainable = _count_params(model)
     print(f"Model params — total: {total:,}  trainable: {trainable:,}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.5, 0.9))
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.995)
+    if args.c > 0:
+        manifold_params = []
+        euclidean_params = []
+        for p in model.parameters():
+            if hasattr(p, "manifold"):
+                manifold_params.append(p)
+            else:
+                euclidean_params.append(p)
+        print(f"Manifold params: {len(manifold_params)}")
+        
+        param_groups = []
+        if len(manifold_params) > 0:
+            # Conservative betas for manifold states to reduce exp_avg instability.
+            param_groups.append({"params": manifold_params, "lr": args.lr_manifold, "betas": (0.0, 0.95), "eps": args.geoopt_eps})
+        if len(euclidean_params) > 0:
+            param_groups.append({"params": euclidean_params, "lr": args.lr_g, 'betas': (0.5, 0.9)})
+
+        print(
+            f"Geoopt groups: manifold={len(manifold_params)}, "
+            f"euclidean={len(euclidean_params)}, lr_manifold={args.lr_manifold:.2e}, lr_g={args.lr_g:.2e}, "
+            f"eps={args.geoopt_eps:.1e}, stabilize={args.geoopt_stabilize}, "
+        )
+        optimizer = geoopt.optim.RiemannianAdam(
+            param_groups,
+        )
+    else:
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr_g, betas=(0.5, 0.9))
+        print('AdamW initialised', args.lr_g)
+
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.999)
 
     st_epoch = 1
     if args.resume:
@@ -129,18 +179,27 @@ def main():
     for epoch in pbar:
         model.train()
         train_rec, train_com, n_batches = 0.0, 0.0, 0
+        total_fw_time, total_bw_time, total_iter_time = 0.0, 0.0, 0.0
 
+        t0 = time.time()
         for batch_idx, (imgs, _) in enumerate(train_loader, 1):
+            total_iter_time += time.time() - t0
             imgs = imgs.to(device)
 
+            t_fw_start = time.time()
             x_hat, commit_loss, codes = model(imgs)
             rec_loss = F.mse_loss(x_hat, imgs)
             loss = rec_loss + args.LAMBDA_COM * commit_loss
+            t_fw_end = time.time()
+            total_fw_time += (t_fw_end - t_fw_start)
 
+            t_bw_start = time.time()
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            t_bw_end = time.time()
+            total_bw_time += (t_bw_end - t_bw_start)
             global_step += 1
 
             train_rec += rec_loss.item()
@@ -165,9 +224,16 @@ def main():
                 print(f"  [epoch {epoch}, iter {batch_idx}] rec={rec_loss.item():.5f}  "
                       f"commit={commit_loss.item():.5f}  total={loss.item():.5f}")
 
+            t0 = time.time()
+
         scheduler.step()
         train_rec /= n_batches
         train_com /= n_batches
+
+        avg_fw_time = total_fw_time / n_batches
+        avg_bw_time = total_bw_time / n_batches
+        avg_iter_time = total_iter_time / n_batches
+        print(f"Epoch {epoch} timing: avg fw pass={avg_fw_time:.4f}s, avg bw pass={avg_bw_time:.4f}s, avg new batch iter={avg_iter_time:.4f}s")
 
         # ── Validation ────────────────────────────────────────────────
         model.eval()

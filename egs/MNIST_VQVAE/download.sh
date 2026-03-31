@@ -15,4 +15,4 @@ source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
-python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/download_cifar100.py
+python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/download_emnist.py
