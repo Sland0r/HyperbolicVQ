@@ -19,10 +19,11 @@ python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/eval_ddp.py \
         --BATCH_SIZE 32 \
         --save_dir /home/acolombo/VAEs/logs \
         --valid_data_path /home/acolombo/VAEs/dataset/LibriTTS/dev-clean \
-        --checkpoint /home/acolombo/VAEs/checkpoint/soundstream/2026-03-19-17-12/best_1.pth \
+        --checkpoint /home/acolombo/VAEs/checkpoint/soundstream/21361013/latest.pth \
         --sr 24000 \
         --ratios 6 5 4 2 \
         --target_bandwidths 1 2 4 8 12 \
         --print_freq 100 \
-        --ema \
-        #--c 1.0
+        --c 1.0 \
+        --remove 3 \
+        #--ema \

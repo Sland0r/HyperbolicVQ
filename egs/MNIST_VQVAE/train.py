@@ -4,6 +4,9 @@ import glob
 import math
 import os
 import time
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import geoopt
 
 import torch
@@ -15,76 +18,148 @@ from tqdm import tqdm
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train VQ-VAE")
-    # dataset
-    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar100", "emnist"],
-                        help="dataset to train on")
-    parser.add_argument("--emnist_split", type=str, default="byclass",
-                        choices=["byclass", "bymerge", "balanced", "letters", "digits", "mnist"],
-                        help="EMNIST split (only used when --dataset=emnist)")
-    # model
-    parser.add_argument("--D", type=int, default=128, help="codebook / latent dimension")
-    parser.add_argument("--n_q", type=int, default=4, help="number of residual quantizers")
-    parser.add_argument("--bins", type=int, default=256, help="codebook size per quantizer")
-    parser.add_argument("--c", type=float, default=0.0, help="curvature for hyperbolic quantization (0=Euclidean)")
-    parser.add_argument("--ema", action="store_true", help="use EMA codebook updates")
-    parser.add_argument("--kmeans_init", action="store_true", help="initialise codebooks with k-means")
-    # training
-    parser.add_argument("--N_EPOCHS", type=int, default=50, help="number of training epochs")
-    parser.add_argument("--BATCH_SIZE", type=int, default=128, help="batch size")
-    parser.add_argument("--lr_g", type=float, default=3e-4, help="learning rate")
-    parser.add_argument("--lr_manifold", type=float, default=1e-3, help="learning rate")
+    # args for random
     parser.add_argument(
-        '--geoopt_eps',
-        type=float,
-        default=1e-5,
+        '--seed', type=int, default=42,
+        help='seed for initializing training')
+    parser.add_argument(
+        '--cudnn_deterministic', action='store_true',
+        help='set cudnn.deterministic True')
+    parser.add_argument(
+        '--tensorboard', action='store_true',
+        help='use tensorboard for logging')
+    # args for dataset
+    parser.add_argument(
+        '--dataset', type=str, default='mnist',
+        choices=['mnist', 'cifar100', 'emnist'],
+        help='dataset to train on')
+    parser.add_argument(
+        '--emnist_split', type=str, default='byclass',
+        choices=['byclass', 'bymerge', 'balanced', 'letters', 'digits', 'mnist'],
+        help='EMNIST split (only used when --dataset=emnist)')
+    parser.add_argument(
+        '--data_dir', type=str, default='',
+        help='dataset directory (auto-set if empty)')
+    # args for model
+    parser.add_argument(
+        '--D', type=int, default=128,
+        help='codebook / latent dimension')
+    parser.add_argument(
+        '--n_q', type=int, default=4,
+        help='number of residual quantizers')
+    parser.add_argument(
+        '--bins', type=int, default=256,
+        help='codebook size per quantizer')
+    parser.add_argument(
+        '--c', type=float, default=0.0,
+        help='curvature for hyperbolic quantization (0=Euclidean)')
+    parser.add_argument(
+        '--ema', action='store_true',
+        help='use EMA for codebook (default: False)')
+    parser.add_argument(
+        '--kmeans_init', action='store_true',
+        help='use kmeans_init for codebook (default: False)')
+    parser.add_argument(
+        '--pre_quant_batchnorm', action='store_true',
+        help='apply BatchNorm1d on encoder output right before quantization')
+    parser.add_argument(
+        '--exponential_lambda', type=float, default=0.0,
+        help='exponential_lambda of codebook dropout')
+    parser.add_argument(
+        '--remove', type=int, default=0,
+        help='number of codebooks to remove (default: 0)')
+    # args for training
+    parser.add_argument(
+        '--N_EPOCHS', type=int, default=50,
+        help='Total training epochs')
+    parser.add_argument(
+        '--st_epoch', type=int, default=1,
+        help='start training epoch')
+    parser.add_argument(
+        '--global_step', type=int, default=0,
+        help='record the global step')
+    parser.add_argument(
+        '--BATCH_SIZE', type=int, default=128,
+        help='batch size')
+    parser.add_argument(
+        '--LAMBDA_COM', type=float, default=1.0,
+        help='hyper-parameter for commit loss')
+    parser.add_argument(
+        '--print_freq', type=int, default=100,
+        help='print every N batches')
+    parser.add_argument(
+        '--codebook_number', type=int, default=0,
+        help='which codebook to visualize (default: 0)')
+    parser.add_argument(
+        '--number_of_steps', type=int, default=50,
+        help='save codebook every number_of_steps batches (default: 50)')
+    # args for learning rate
+    parser.add_argument(
+        '--lr_g', type=float, default=3e-4,
+        help='base learning rate for generator and euclidean parameters')
+    parser.add_argument(
+        '--lr_manifold', type=float, default=1e-3,
+        help='learning rate for manifold parameters (geoopt)')
+    parser.add_argument(
+        '--geoopt_eps', type=float, default=1e-5,
         help='epsilon for geoopt RiemannianAdam denominator stability')
     parser.add_argument(
-        '--geoopt_stabilize',
-        type=int,
-        default=1,
+        '--geoopt_stabilize', type=int, default=1,
         help='apply manifold stabilization every N steps (1 = every step)')
-    parser.add_argument("--LAMBDA_COM", type=float, default=1.0, help="commitment loss weight")
-    parser.add_argument("--print_freq", type=int, default=100, help="print every N batches")
-    parser.add_argument("--codebook_number", type=int, default=0, help="which codebook to visualize")
-    parser.add_argument("--number_of_steps", type=int, default=50, help="save codebook snapshot every N batches")
-    # paths
-    parser.add_argument("--PATH", type=str, default="/home/acolombo/VAEs/checkpoint/mnist_vqvae",
-                        help="checkpoint save directory")
-    parser.add_argument("--data_dir", type=str, default="",
-                        help="dataset directory (auto-set if empty)")
-    parser.add_argument("--resume", action="store_true", help="resume training from checkpoint")
-    parser.add_argument("--resume_path", type=str, default="", help="path to checkpoint to resume from")
-    parser.add_argument("--seed", type=int, default=42, help="random seed")
+    parser.add_argument(
+        '--quantizer_grad_clip', type=float, default=0.05,
+        help='max norm for quantizer/codebook gradients before global clipping')
+    parser.add_argument(
+        '--manifold_grad_clip', type=float, default=0.02,
+        help='max norm for manifold quantizer gradients before optimizer step')
+    parser.add_argument(
+        '--warmup_epochs_g', type=int, default=0,
+        help='number of linear warmup epochs for generator LR scheduler')
+    # args for paths
+    parser.add_argument(
+        '--PATH', type=str,
+        default='/home/acolombo/VAEs/checkpoint/mnist_vqvae',
+        help='The path to save the model')
+    parser.add_argument(
+        '--resume', action='store_true',
+        help='whether re-train model')
+    parser.add_argument(
+        '--resume_path', type=str, default='',
+        help='resume_path')
     args = parser.parse_args()
 
     # create unique run dir
     if args.resume:
         args.PATH = args.resume_path
     else:
-        if "SLURM_JOB_ID" in os.environ:
-            time_str = os.environ["SLURM_JOB_ID"]
+        if 'SLURM_JOB_ID' in os.environ:
+            time_str = os.environ['SLURM_JOB_ID']
         else:
-            time_str = time.strftime("%Y-%m-%d-%H-%M")
+            time_str = time.strftime('%Y-%m-%d-%H-%M')
         args.PATH = os.path.join(args.PATH, time_str)
+    args.save_dir = args.PATH
     os.makedirs(args.PATH, exist_ok=True)
 
     # Set default data_dir based on dataset
     if not args.data_dir:
-        base = "/home/acolombo/VAEs/dataset"
-        ds_map = {"mnist": "MNIST", "cifar100": "CIFAR100", "emnist": "EMNIST"}
+        base = '/home/acolombo/VAEs/dataset'
+        ds_map = {'mnist': 'MNIST', 'cifar100': 'CIFAR100', 'emnist': 'EMNIST'}
         args.data_dir = os.path.join(base, ds_map[args.dataset])
 
     return args
 
 
+from academicodec.utils import Logger
+
 def main():
     args = get_args()
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
-    print("All arguments:")
+    logger = Logger(args)
+    logger.log_info(f"Device: {device}")
+    logger.log_info("All arguments:")
     for k, v in vars(args).items():
-        print(f"  {k}: {v}")
+        logger.log_info(f"  {k}: {v}")
 
     # Save config to checkpoint directory
     config_path = os.path.join(args.PATH, "config.py")
@@ -92,7 +167,7 @@ def main():
         f.write("# Training hyperparameters\n")
         for k, v in vars(args).items():
             f.write(f"{k} = {v!r}\n")
-    print(f"Config saved to: {config_path}")
+    logger.log_info(f"Config saved to: {config_path}")
 
     # ── Data ──────────────────────────────────────────────────────────
     transform = transforms.ToTensor()  # scales to [0, 1]
@@ -109,20 +184,20 @@ def main():
         train_data = datasets.CIFAR100(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.CIFAR100(root=args.data_dir, train=False, download=True, transform=transform)
     train_loader = DataLoader(train_data, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
-    print(f"Train loader size: {len(train_loader)}")
+    logger.log_info(f"Train loader size: {len(train_loader)}")
     val_loader = DataLoader(val_data, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True)
 
     # ── Model ─────────────────────────────────────────────────────────
     from mnist_vqvae import VQVAE2D, _count_params
 
     model = VQVAE2D(
-        D=args.D, n_q=args.n_q, bins=args.bins,
-        c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
-        in_channels=in_channels, img_size=img_size,
+        D=args.D, n_q=args.n_q, bins=args.bins, c=args.c, 
+        exponential_lambda=args.exponential_lambda, ema=args.ema, 
+        kmeans_init=args.kmeans_init, in_channels=in_channels, img_size=img_size,
     ).to(device)
-    print(model)
+    logger.log_info(model)
     total, trainable = _count_params(model)
-    print(f"Model params — total: {total:,}  trainable: {trainable:,}")
+    logger.log_info(f"Model params — total: {total:,}  trainable: {trainable:,}")
 
     if args.c > 0:
         manifold_params = []
@@ -132,7 +207,7 @@ def main():
                 manifold_params.append(p)
             else:
                 euclidean_params.append(p)
-        print(f"Manifold params: {len(manifold_params)}")
+        logger.log_info(f"Manifold params: {len(manifold_params)}")
         
         param_groups = []
         if len(manifold_params) > 0:
@@ -141,7 +216,7 @@ def main():
         if len(euclidean_params) > 0:
             param_groups.append({"params": euclidean_params, "lr": args.lr_g, 'betas': (0.5, 0.9)})
 
-        print(
+        logger.log_info(
             f"Geoopt groups: manifold={len(manifold_params)}, "
             f"euclidean={len(euclidean_params)}, lr_manifold={args.lr_manifold:.2e}, lr_g={args.lr_g:.2e}, "
             f"eps={args.geoopt_eps:.1e}, stabilize={args.geoopt_stabilize}, "
@@ -152,7 +227,7 @@ def main():
     else:
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=args.lr_g, betas=(0.5, 0.9))
-        print('AdamW initialised', args.lr_g)
+        logger.log_info(f"AdamW initialised {args.lr_g}")
 
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.999)
 
@@ -163,7 +238,7 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
         st_epoch = ckpt["epoch"] + 1
-        print(f"Resumed from epoch {ckpt['epoch']}")
+        logger.log_info(f"Resumed from epoch {ckpt['epoch']}")
 
     # ── Codebook visualisation setup ────────────────────────────────
     from academicodec.visualization import fit_pca, plot_codes, create_gif
@@ -174,12 +249,23 @@ def main():
 
     # ── Training loop ─────────────────────────────────────────────────
     best_val_loss = float("inf")
+    best_val_epoch = -1
     history = {"train_rec": [], "train_com": [], "val_rec": [], "val_com": [], "val_total": []}
+    all_val_ppls = []    # list of per-epoch val PPL lists  (one list per epoch)
+    all_train_ppls = []  # list of per-epoch train PPL lists (whole epoch)
     pbar = tqdm(range(st_epoch, args.N_EPOCHS + 1), desc="Training")
     for epoch in pbar:
         model.train()
         train_rec, train_com, n_batches = 0.0, 0.0, 0
         total_fw_time, total_bw_time, total_iter_time = 0.0, 0.0, 0.0
+
+        # ── Train PPL histograms ────────────────────────────────────
+        train_codes_hist = None
+        train_codes_hist_last10 = None
+        total_train_codes = 0
+        total_train_codes_last10 = 0
+        total_train_iters = len(train_loader)
+        last_10_percent_start = int(total_train_iters * 0.9)
 
         t0 = time.time()
         for batch_idx, (imgs, _) in enumerate(train_loader, 1):
@@ -206,6 +292,25 @@ def main():
             train_com += commit_loss.item()
             n_batches += 1
 
+            # ── Accumulate train code usage for PPL ──────────────
+            with torch.no_grad():
+                if train_codes_hist is None:
+                    num_q = codes.shape[0]
+                    codebook_size = args.bins
+                    train_codes_hist = torch.zeros(num_q, codebook_size, device=device)
+                    train_codes_hist_last10 = torch.zeros(num_q, codebook_size, device=device)
+                codes_count = codes.shape[1] * codes.shape[2]  # B * N
+                total_train_codes += codes_count
+                is_last10 = batch_idx > last_10_percent_start
+                if is_last10:
+                    total_train_codes_last10 += codes_count
+                for q_idx in range(codes.shape[0]):
+                    codes_q = codes[q_idx].flatten()
+                    ones = torch.ones_like(codes_q, dtype=torch.float32)
+                    train_codes_hist[q_idx].scatter_add_(0, codes_q, ones)
+                    if is_last10:
+                        train_codes_hist_last10[q_idx].scatter_add_(0, codes_q, ones)
+
             # ── Codebook snapshot ──────────────────────────────────
             if not pca_fitted:
                 codebook_module = model.quantizer.vq.layers[args.codebook_number]._codebook
@@ -221,8 +326,9 @@ def main():
                 plot_codes(codes_cb, pca_model, args.c, global_step, codebook_plots_dir)
 
             if batch_idx % args.print_freq == 0:
-                print(f"  [epoch {epoch}, iter {batch_idx}] rec={rec_loss.item():.5f}  "
-                      f"commit={commit_loss.item():.5f}  total={loss.item():.5f}")
+                message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}>'.format(
+                    epoch, batch_idx, loss.item(), rec_loss.item(), commit_loss.item())
+                logger.log_info(message)
 
             t0 = time.time()
 
@@ -230,10 +336,30 @@ def main():
         train_rec /= n_batches
         train_com /= n_batches
 
+        # ── Compute and log train PPL ────────────────────────────────
+        with torch.no_grad():
+            train_ppl_whole = []
+            if train_codes_hist is not None and total_train_codes > 0:
+                probs = train_codes_hist / train_codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+                train_ppl_whole = torch.exp2(entropy).tolist()
+
+            train_ppl_last10 = []
+            if train_codes_hist_last10 is not None and total_train_codes_last10 > 0:
+                probs = train_codes_hist_last10 / train_codes_hist_last10.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+                train_ppl_last10 = torch.exp2(entropy).tolist()
+
+        all_train_ppls.append(train_ppl_whole)
+        train_ppl_str = ", ".join([f"{p:.1f}" for p in train_ppl_whole]) if train_ppl_whole else "N/A"
+        train_ppl_last10_str = ", ".join([f"{p:.1f}" for p in train_ppl_last10]) if train_ppl_last10 else "N/A"
+        logger.log_info(f"Train PPL (whole epoch): [{train_ppl_str}]")
+        logger.log_info(f"Train PPL (last 10%): [{train_ppl_last10_str}]")
+
         avg_fw_time = total_fw_time / n_batches
         avg_bw_time = total_bw_time / n_batches
         avg_iter_time = total_iter_time / n_batches
-        print(f"Epoch {epoch} timing: avg fw pass={avg_fw_time:.4f}s, avg bw pass={avg_bw_time:.4f}s, avg new batch iter={avg_iter_time:.4f}s")
+        logger.log_info(f"Epoch {epoch} timing: avg fw pass={avg_fw_time:.4f}s, avg bw pass={avg_bw_time:.4f}s, avg new batch iter={avg_iter_time:.4f}s")
 
         # ── Validation ────────────────────────────────────────────────
         model.eval()
@@ -266,19 +392,21 @@ def main():
 
         pbar.set_postfix(train_rec=f"{train_rec:.4f}", val_rec=f"{val_rec:.4f}", val_total=f"{val_total:.4f}")
 
-        print(f"Epoch {epoch}: train_rec={train_rec:.5f}  train_com={train_com:.5f}  |  "
-              f"val_rec={val_rec:.5f}  val_com={val_com:.5f}  val_total={val_total:.5f}")
+        message_train = '<epoch:{:d}, total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, commit_loss_train:{:.4f}>'.format(
+            epoch, train_rec + args.LAMBDA_COM * train_com, train_rec, train_com)
+        logger.log_info(message_train)
 
-        # Print cluster sizes per quantizer
+        # Compute & store validation PPL per codebook
+        val_ppls = []
         if codes_hist is not None:
             for q in range(codes_hist.shape[0]):
                 sizes = codes_hist[q].long().tolist()
-                sizes = [s / sum(sizes) for s in sizes] 
+                sizes = [s / sum(sizes) for s in sizes]
                 entropy = -sum(p * math.log2(p) for p in sizes if p > 0)
                 perplexity = 2 ** entropy
-                max_perplexity = args.bins
-                print(f"  Q{q} perplexity: {perplexity:.2f} / {max_perplexity}", end=" -> ")
-            print()
+                val_ppls.append(perplexity)
+        all_val_ppls.append(val_ppls)
+        ppl_str = ", ".join([f"{p:.1f}" for p in val_ppls]) if val_ppls else "N/A"
 
         # ── Checkpointing ─────────────────────────────────────────────
         # Only save checkpoints after reaching 75% of total epochs
@@ -297,16 +425,25 @@ def main():
             # Save best checkpoint if improved
             if val_total < best_val_loss:
                 best_val_loss = val_total
+                best_val_epoch = epoch
                 torch.save(save_dict, os.path.join(args.PATH, f"best_{epoch}.pth"))
-                print(f"  ✓ New best model saved (val_total={val_total:.5f})")
+                logger.log_info(f"  ✓ New best model saved (val_total={val_total:.5f})")
+        else:
+            if val_total < best_val_loss:
+                best_val_loss = val_total
+                best_val_epoch = epoch
+
+        message_val = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, ppl:[{}], best_epoch:{:d}>'.format(
+            epoch, val_total, val_rec, val_com, ppl_str, best_val_epoch)
+        logger.log_info(message_val)
 
     # ── End-of-training evaluation ──────────────────────────────────
-    print("\n" + "=" * 60)
-    print("Training complete — Final evaluation")
-    print("=" * 60)
+    logger.log_info("\n" + "=" * 60)
+    logger.log_info("Training complete — Final evaluation")
+    logger.log_info("=" * 60)
 
     # Last model validation loss (already computed in the last epoch)
-    print(f"\n  Last model  (epoch {epoch}):  val_rec={val_rec:.5f}  "
+    logger.log_info(f"\n  Last model  (epoch {epoch}):  val_rec={val_rec:.5f}  "
           f"val_com={val_com:.5f}  val_total={val_total:.5f}")
 
     # Best model validation loss
@@ -331,17 +468,13 @@ def main():
         best_val_total = best_val_rec + args.LAMBDA_COM * best_val_com
         best_epoch = best_ckpt["epoch"]
 
-        print(f"  Best model  (epoch {best_epoch}):  val_rec={best_val_rec:.5f}  "
+        logger.log_info(f"  Best model  (epoch {best_epoch}):  val_rec={best_val_rec:.5f}  "
               f"val_com={best_val_com:.5f}  val_total={best_val_total:.5f}")
-        print(f"  Loaded from: {best_path}")
+        logger.log_info(f"  Loaded from: {best_path}")
     else:
-        print("  No best checkpoint found (training may not have reached 75% of epochs).")
+        logger.log_info("  No best checkpoint found (training may not have reached 75% of epochs).")
 
     # ── Plot examples: original vs reconstructed ─────────────────
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     n_examples = 8
     model.eval()
     # grab one batch from val set
@@ -371,9 +504,9 @@ def main():
     fig_path = os.path.join(args.PATH, "reconstruction_examples.png")
     fig.savefig(fig_path, dpi=150)
     plt.close(fig)
-    print(f"\n  Reconstruction examples saved to: {fig_path}")
+    logger.log_info(f"\n  Reconstruction examples saved to: {fig_path}")
 
-    # ── Loss curves ──────────────────────────────────────────────
+    # ── 1) Loss curves ───────────────────────────────────────────
     epochs_range = list(range(st_epoch, st_epoch + len(history["train_rec"])))
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -404,7 +537,94 @@ def main():
     loss_fig_path = os.path.join(args.PATH, "loss_curves.png")
     fig.savefig(loss_fig_path, dpi=150)
     plt.close(fig)
-    print(f"  Loss curves saved to: {loss_fig_path}")
+    logger.log_info(f"  Loss curves saved to: {loss_fig_path}")
+
+    # ── 2) PPLs per codebook (val) ──────────────────────────────
+    # Each codebook gets its own subplot showing PPL across epochs
+    if all_val_ppls and len(all_val_ppls[0]) > 0:
+        num_quantizers = len(all_val_ppls[0])
+        lists_per_q = list(zip(*all_val_ppls))
+
+        cols = min(5, num_quantizers)
+        rows = math.ceil(num_quantizers / cols)
+
+        fig, axes_ppl = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
+        if num_quantizers == 1:
+            axes_ppl = [axes_ppl]
+        else:
+            axes_ppl = axes_ppl.flatten() if hasattr(axes_ppl, 'flatten') else [axes_ppl]
+
+        for i in range(num_quantizers):
+            axes_ppl[i].plot(epochs_range, lists_per_q[i], color='tab:blue', linewidth=2)
+            axes_ppl[i].set_title(f"Quantizer {i+1}", fontsize=10, fontweight='bold')
+            axes_ppl[i].set_xlabel("Epoch", fontsize=8)
+            axes_ppl[i].set_ylabel("PPL", fontsize=8)
+            axes_ppl[i].grid(True, linestyle='--', alpha=0.7)
+
+        for i in range(num_quantizers, len(axes_ppl)):
+            fig.delaxes(axes_ppl[i])
+
+        plt.tight_layout()
+        ppl_cb_path = os.path.join(args.PATH, "ppls_per_codebook.png")
+        plt.savefig(ppl_cb_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.log_info(f"  PPLs per codebook saved to: {ppl_cb_path}")
+
+    # ── 3) PPLs per epoch (val) — codebook index vs PPL across epochs ─
+    if all_val_ppls and len(all_val_ppls[0]) > 0:
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        codebook_indices = list(range(1, num_quantizers + 1))
+
+        cmap = plt.get_cmap('viridis')
+        colors = [cmap(i / max(1, len(all_val_ppls) - 1)) for i in range(len(all_val_ppls))]
+
+        for epoch_idx, ppls in enumerate(all_val_ppls):
+            ax2.plot(codebook_indices, ppls, marker='.', markersize=4, alpha=0.6,
+                     color=colors[epoch_idx], linewidth=1.5)
+
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(all_val_ppls)-1))
+        sm.set_array([])
+        cbar = fig2.colorbar(sm, ax=ax2)
+        cbar.set_label("Epoch", fontsize=10)
+
+        ax2.set_xticks(codebook_indices)
+        ax2.set_xlabel("Codebook Index", fontsize=10)
+        ax2.set_ylabel("PPL", fontsize=10)
+        ax2.set_title("Codebook vs Val PPL across Epochs", fontsize=12, fontweight='bold')
+        ax2.grid(True, linestyle='--', alpha=0.7)
+
+        ppl_epoch_path = os.path.join(args.PATH, "ppls_per_epoch.png")
+        plt.savefig(ppl_epoch_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.log_info(f"  PPLs per epoch (val) saved to: {ppl_epoch_path}")
+
+    # ── 4) Train PPLs per epoch — codebook index vs train PPL ───
+    if all_train_ppls and len(all_train_ppls[0]) > 0:
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        codebook_indices = list(range(1, len(all_train_ppls[0]) + 1))
+
+        cmap = plt.get_cmap('viridis')
+        colors = [cmap(i / max(1, len(all_train_ppls) - 1)) for i in range(len(all_train_ppls))]
+
+        for epoch_idx, ppls in enumerate(all_train_ppls):
+            ax3.plot(codebook_indices, ppls, marker='.', markersize=4, alpha=0.6,
+                     color=colors[epoch_idx], linewidth=1.5)
+
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(all_train_ppls)-1))
+        sm.set_array([])
+        cbar = fig3.colorbar(sm, ax=ax3)
+        cbar.set_label("Epoch", fontsize=10)
+
+        ax3.set_xticks(codebook_indices)
+        ax3.set_xlabel("Codebook Index", fontsize=10)
+        ax3.set_ylabel("PPL", fontsize=10)
+        ax3.set_title("Codebook vs Train PPL across Epochs", fontsize=12, fontweight='bold')
+        ax3.grid(True, linestyle='--', alpha=0.7)
+
+        train_ppl_path = os.path.join(args.PATH, "train_ppls_per_epoch.png")
+        plt.savefig(train_ppl_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.log_info(f"  Train PPLs per epoch saved to: {train_ppl_path}")
 
     # ── Final codebook snapshot + GIF ────────────────────────────
     if pca_fitted:
@@ -414,7 +634,7 @@ def main():
 
     gif_path = os.path.join(args.PATH, "codebook_evolution.gif")
     create_gif(codebook_plots_dir, gif_path)
-    print(f"  Codebook evolution GIF saved to: {gif_path}")
+    logger.log_info(f"  Codebook evolution GIF saved to: {gif_path}")
 
 
 if __name__ == "__main__":

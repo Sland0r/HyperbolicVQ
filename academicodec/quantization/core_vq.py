@@ -308,6 +308,8 @@ class EuclideanCodebook(nn.Module):
     def replace_(self, samples, mask):
         #assert_finite(samples, "replace_/samples")
         #assert_finite(self.embed, "replace_/embed(before)")
+        #also add some noise
+        samples = samples + torch.randn_like(samples) * 0.01
         modified_codebook = torch.where(
             mask[..., None], # true when codebook is dead
             sample_vectors(samples, self.codebook_size), self.embed)
@@ -454,6 +456,7 @@ class VectorQuantization(nn.Module):
             threshold_ema_dead_code: int=2,
             commitment_weight: float=0.25,
             c: float=0.,
+            remove: int=0,
             ema: bool=True, ):
         super().__init__()
         self.c = c
@@ -509,11 +512,11 @@ class VectorQuantization(nn.Module):
         quantize_raw = quantize
 
         if self.training:
-            if self.c > 0:
-                diff = mobius_sub(quantize, x, self.c)
-                quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
-            else:
-                quantize = x + (quantize - x).detach()
+            # if self.c > 0:
+            #     diff = mobius_sub(quantize, x, self.c)
+            #     quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
+            # else:
+            quantize = x + (quantize - x).detach()
 
         loss = torch.tensor([0.0], device=device, requires_grad=self.training)
 
@@ -549,6 +552,7 @@ class ResidualVectorQuantization(nn.Module):
         self.c = kwargs.get("c", 0.0)
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
+        self.remove = kwargs.get("remove", 0)
 
     def forward(self, x, n_q: tp.Optional[int]=None):
         if self.c > 0:
@@ -561,6 +565,7 @@ class ResidualVectorQuantization(nn.Module):
         all_indices = []
 
         n_q = n_q or len(self.layers)
+        n_q = n_q - self.remove
 
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)

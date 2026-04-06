@@ -24,7 +24,7 @@ def _load_audio(filepath):
 class NSynthDataset(Dataset):
     """Dataset to load NSynth data."""
 
-    def __init__(self, audio_dir):
+    def __init__(self, audio_dir, use_spec_augment=False):
         super().__init__()
         self.filenames = []
         self.filenames.extend(glob.glob(audio_dir + "/**/*.wav", recursive=True))
@@ -34,6 +34,36 @@ class NSynthDataset(Dataset):
                 f"No .wav files found in {audio_dir} (searched recursively)")
         _, self.sr = _load_audio(self.filenames[0])
         self.max_len = 24000  # 24000
+        self.use_spec_augment = use_spec_augment
+
+    def _apply_spec_augment(self, waveform):
+        # waveform: (channels, length)
+        # We use a context manager to avoid storing gradients, just in case
+        with torch.no_grad():
+            n_fft = 1024
+            hop_length = 256
+            window = torch.hann_window(n_fft).to(waveform.device)
+            
+            stft = torch.stft(waveform, n_fft=n_fft, hop_length=hop_length, 
+                              window=window, return_complex=True)
+            
+            # SpecAugment parameters
+            time_mask_param = max(1, stft.shape[-1] // 5)
+            freq_mask_param = max(1, stft.shape[-2] // 5)
+            
+            # Time mask
+            t = random.randint(0, time_mask_param)
+            t0 = random.randint(0, max(1, stft.shape[-1] - t))
+            stft[..., :, t0 : t0 + t] = 0.0
+            
+            # Freq mask
+            f = random.randint(0, freq_mask_param)
+            f0 = random.randint(0, max(1, stft.shape[-2] - f))
+            stft[..., f0 : f0 + f, :] = 0.0
+            
+            aug_waveform = torch.istft(stft, n_fft=n_fft, hop_length=hop_length, 
+                                       window=window, length=waveform.shape[-1])
+        return aug_waveform
 
     def __len__(self):
         return len(self.filenames)
@@ -68,7 +98,13 @@ class NSynthDataset(Dataset):
             if audio.shape[1] > self.max_len:
                 st = random.randint(0, audio.shape[1] - self.max_len - 1)
                 ed = st + self.max_len
-                return audio[:, st:ed]
+                ans = audio[:, st:ed]
             else:
                 ans[:, :audio.shape[1]] = audio
-                return ans
+        
+        if getattr(self, 'use_spec_augment', False):
+            # Apply SpecAugment with 50% probability
+            if random.random() > 0.5:
+                ans = self._apply_spec_augment(ans)
+
+        return ans

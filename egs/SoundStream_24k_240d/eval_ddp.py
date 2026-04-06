@@ -77,6 +77,7 @@ def get_args():
         '--tensorboard',
         action='store_true',
         help='use tensorboard for logging')
+    parser.add_argument("--remove", type=int, default=0, help="number of codebooks to remove")
     # args for training
     parser.add_argument(
         '--LAMBDA_ADV',
@@ -141,6 +142,10 @@ def get_args():
         '--pre_quant_batchnorm',
         action='store_true',
         help='apply BatchNorm1d on encoder output right before quantization')
+    parser.add_argument(
+        '--kmeans_init',
+        action='store_true',
+        help='use kmeans_init for codebook (default: False)')
     args = parser.parse_args()
     
     if 'SLURM_JOB_ID' in os.environ:
@@ -155,7 +160,7 @@ def get_args():
 
 def get_input(x):
     x = x.to(memory_format=torch.contiguous_format)
-    return x.float()
+    return x.to(torch.get_default_dtype())
 
 
 def main():
@@ -178,18 +183,16 @@ def main():
 
 
 def main_worker(local_rank, args):
+    if getattr(args, 'c', 0.0) > 0:
+        torch.set_default_dtype(torch.float64)
     args.local_rank = local_rank
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
     args.distributed = args.world_size > 1
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(
-        n_filters=32,
-        D=512,
-        ratios=args.ratios,
-        c=args.c,
-        ema=args.ema,
-        pre_quant_batchnorm=args.pre_quant_batchnorm)
+    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
+                              ema=args.ema, kmeans_init=args.kmeans_init,
+                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)

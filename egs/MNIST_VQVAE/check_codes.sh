@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#SBATCH --partition=gpu_h100
-#SBATCH --gpus=1
+#SBATCH --partition=staging
 #SBATCH --job-name=check_codes
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
@@ -14,14 +13,11 @@ module load Anaconda3/2025.06-1
 source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
-CHECKPOINT="/home/acolombo/VAEs/checkpoint/mnist_vqvae/21367989/best_43.pth"
-C=0
+CHECKPOINT="/home/acolombo/VAEs/checkpoint/mnist_vqvae/21520796/latest.pth"
 
 python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/check_codes.py \
         --checkpoint $CHECKPOINT \
-        --c $C
         
 python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/check_codes.py \
         --checkpoint $CHECKPOINT \
-        --c $C \
         --plot_images

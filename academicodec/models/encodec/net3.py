@@ -14,14 +14,17 @@ class SoundStream(nn.Module):
                  n_filters,
                  D,
                  target_bandwidths=[7.5, 15],
+                 exponential_lambda=0.4,
                  ratios=[8, 5, 4, 2],
                  sample_rate=24000,
                  bins=1024,
                  normalize=False,
+                 threshold_ema_dead_code=2,
                  c: float=0.0,
                  ema: bool=True,
                  kmeans_init: bool=True,
-                 pre_quant_batchnorm: bool=False):
+                 pre_quant_batchnorm: bool=False,
+                 remove: int=0):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -31,9 +34,11 @@ class SoundStream(nn.Module):
         self.frame_rate = math.ceil(sample_rate / np.prod(ratios))  # 75
         self.bits_per_codebook = int(math.log2(bins))
         self.target_bandwidths = target_bandwidths
+        self.exponential_lambda = exponential_lambda
+        self.threshold_ema_dead_code = threshold_ema_dead_code
         self.quantizer = ResidualVectorQuantizer(
-            dimension=D, n_q=n_q, bins=bins, c=c,
-            ema=ema, kmeans_init=kmeans_init)
+            dimension=D, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, c=c,
+            ema=ema, kmeans_init=kmeans_init, remove=remove)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(
@@ -46,7 +51,11 @@ class SoundStream(nn.Module):
         e = self.encoder(x)
         e = self.pre_quant_bn(e)
         max_idx = len(self.target_bandwidths) - 1
-        bw = self.target_bandwidths[random.randint(0, max_idx)] # maybe make exponential
+        if self.exponential_lambda > 0.0:
+            idx = min(max_idx, int(random.expovariate(self.exponential_lambda)))
+            bw = self.target_bandwidths[idx]
+        else:
+            bw = self.target_bandwidths[random.randint(0, max_idx)] 
         quantized, codes, bandwidth, commit_loss = self.quantizer(
             e, self.frame_rate, bw)
         o = self.decoder(quantized)

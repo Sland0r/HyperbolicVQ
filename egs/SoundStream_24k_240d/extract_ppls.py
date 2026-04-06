@@ -15,9 +15,11 @@ def main():
     
     # Regexes
     pattern = re.compile(r'ppl:\s*(\[[0-9.,\s+-]+\])')
+    train_pattern = re.compile(r'Train PPL \(whole epoch\):\s*(\[[0-9.,\s+-]+\])')
     save_dir_pattern = re.compile(r'save_dir:\s*(.+)')
     
     all_ppls = []
+    train_ppls = []
     save_dir = None
     
     try:
@@ -31,11 +33,19 @@ def main():
                 
                 # Look for ppl values
                 match = pattern.search(line)
+                train_match = train_pattern.search(line)
                 if match:
                     list_str = match.group(1)
                     try:
                         ppls = ast.literal_eval(list_str)
                         all_ppls.append(ppls)
+                    except Exception as e:
+                        print(f"Warning: could not parse list '{list_str}': {e}", file=sys.stderr)
+                if train_match:
+                    list_str = train_match.group(1)
+                    try:
+                        ppls = ast.literal_eval(list_str)
+                        train_ppls.append(ppls)
                     except Exception as e:
                         print(f"Warning: could not parse list '{list_str}': {e}", file=sys.stderr)
     except FileNotFoundError:
@@ -131,6 +141,38 @@ def main():
     plt.close()
     
     print(f"Plots saved successfully to:\n - {plot_path1}\n - {plot_path2}")
+
+    # ----------------------------------------------------
+    # Third plot: Train PPL vs every epoch/step
+    # ----------------------------------------------------
+    fig3, ax3 = plt.subplots(figsize=(10, 6))
+    codebook_indices = list(range(1, num_quantizers + 1))
+    
+    # Use a colormap to show progression over time (epochs/steps)
+    cmap = plt.get_cmap('viridis')
+    colors = [cmap(i / max(1, len(train_ppls) - 1)) for i in range(len(train_ppls))]
+    
+    for epoch_idx, ppls in enumerate(train_ppls):
+        ax3.plot(codebook_indices, ppls, marker='.', markersize=4, alpha=0.6, color=colors[epoch_idx], linewidth=1.5)
+        
+    # Create a scalar mappable for the colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=len(train_ppls)-1))
+    sm.set_array([])
+    cbar = fig3.colorbar(sm, ax=ax3)
+    cbar.set_label("Logging Step (Time)", fontsize=10)
+    
+    ax3.set_xticks(codebook_indices)
+    ax3.set_xlabel("Codebook Index", fontsize=10)
+    ax3.set_ylabel("PPL", fontsize=10)
+    ax3.set_title("Codebook vs Train PPL across all Logging Steps", fontsize=12, fontweight='bold')
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    
+    plot_path3 = os.path.join(save_dir, "train_ppls_per_epoch.png")
+    plt.savefig(plot_path3, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Plots saved successfully to:\n - {plot_path1}\n - {plot_path2}\n - {plot_path3}")
+    
 
 if __name__ == "__main__":
     main()

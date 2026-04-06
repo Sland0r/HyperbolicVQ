@@ -13,7 +13,7 @@ import torch
 def get_args():
     parser = argparse.ArgumentParser(description="Plot VQ-VAE embeddings from checkpoint iteratively")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to the .pth checkpoint")
-    parser.add_argument("--c", type=float, default=None, help="Curvature (c > 0 for Poincare ball). If not provided, inferred from config.")
+    #parser.add_argument("--c", type=float, default=None, help="Curvature (c > 0 for Poincare ball). If not provided, inferred from config.")
     parser.add_argument("--output", type=str, default="", help="Output image file path")
     parser.add_argument("--plot_images", action="store_true", help="Plot decoded images instead of scatter points")
     parser.add_argument("--image_zoom", type=float, default=0.5, help="Zoom factor for plotted images")
@@ -40,19 +40,19 @@ def main():
     checkpoint_dir = os.path.dirname(args.checkpoint)
     
     # Try to infer config values
-    c = args.c
+    #c = args.c
     dataset = "mnist"
-    if c is None:
-        try:
-            sys.path.insert(0, checkpoint_dir)
-            import config
-            c = hasattr(config, "c") and config.c or 0.0
-            dataset = hasattr(config, "dataset") and config.dataset or "mnist"
-            sys.path.pop(0)
-            print(f"Inferred c={c}, dataset={dataset} from {checkpoint_dir}/config.py")
-        except Exception as e:
-            print(f"Could not read config: {e}. Defaulting to c=0.0")
-            c = 0.0
+    #if c is None:
+    try:
+        sys.path.insert(0, checkpoint_dir)
+        import config
+        c = hasattr(config, "c") and config.c or 0.0
+        dataset = hasattr(config, "dataset") and config.dataset or "mnist"
+        sys.path.pop(0)
+        print(f"Inferred c={c}, dataset={dataset} from {checkpoint_dir}/config.py")
+    except Exception as e:
+        print(f"Could not read config: {e}. Defaulting to c=0.0")
+        c = 0.0
 
     print(f"Loading checkpoint: {args.checkpoint}")
     ckpt = torch.load(args.checkpoint, map_location="cpu")

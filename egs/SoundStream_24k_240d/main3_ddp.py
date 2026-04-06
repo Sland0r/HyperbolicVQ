@@ -129,6 +129,7 @@ def get_args():
         default='model_path/',
         help='The path to save the model')
     parser.add_argument('--sr', type=int, default=24000, help='sample rate')
+    parser.add_argument('--bins', type=int, default=1024, help='number of bins')
     parser.add_argument(
         '--print_freq', type=int, default=10, help='the print number')
     # --save_dir kept for backward compat but defaults to PATH
@@ -165,6 +166,16 @@ def get_args():
         # default for 16k_320d
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
+    parser.add_argument(
+        '--exponential_lambda',
+        type=float,
+        default=0.4,
+        help='exponential_lambda of codebook dropout')
+    parser.add_argument(
+        '--remove',
+        type=int,
+        default=0,
+        help='number of codebooks to remove (default: 0)')
     parser.add_argument(
         '--ema',
         action='store_true',
@@ -222,6 +233,10 @@ def get_args():
         type=int,
         default=0,
         help='number of linear warmup epochs for generator LR scheduler')
+    parser.add_argument(
+        '--use_spec_augment',
+        action='store_true',
+        help='apply SpecAugment data augmentation (default: False)')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -240,7 +255,7 @@ def get_args():
 
 def get_input(x):
     x = x.to(memory_format=torch.contiguous_format)
-    return x.float()
+    return x.to(torch.get_default_dtype())
 
 
 def main():
@@ -262,6 +277,8 @@ def main():
         args=(args, ))
 
 def main_worker(local_rank, args):
+    # if getattr(args, 'c', 0.0) > 0:
+    #     torch.set_default_dtype(torch.float64)
     args.local_rank = local_rank
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
     args.distributed = args.world_size > 1
@@ -269,9 +286,10 @@ def main_worker(local_rank, args):
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
     # 240倍下采
-    soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
+    soundstream = SoundStream(n_filters=32, D=512, target_bandwidths=args.target_bandwidths, exponential_lambda=args.exponential_lambda,
+                              ratios=args.ratios, sample_rate=args.sr, bins=args.bins, c=args.c,
                               ema=args.ema, kmeans_init=args.kmeans_init,
-                              pre_quant_batchnorm=args.pre_quant_batchnorm)
+                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -307,7 +325,16 @@ def main_worker(local_rank, args):
                   device_ids=[args.local_rank],
                   find_unused_parameters=True)
 
-    train_dataset = NSynthDataset(audio_dir=args.train_data_path)
+    if args.train_data_path == "100":
+        args.train_data_path = "/home/acolombo/VAEs/dataset/LibriTTS/train-clean-100"
+    elif args.train_data_path == "360":
+        args.train_data_path = "/scratch-shared/acolombo/LibriTTS/train-clean-360"
+    elif args.train_data_path == "500":
+        args.train_data_path = "/scratch-shared/acolombo/LibriTTS/train-other-500"
+    else:
+        raise ValueError("Invalid train_data_path")
+
+    train_dataset = NSynthDataset(audio_dir=args.train_data_path, use_spec_augment=args.use_spec_augment)
     valid_dataset = NSynthDataset(audio_dir=args.valid_data_path)
     args.sr = train_dataset.sr
     if args.distributed:
@@ -379,7 +406,7 @@ def main_worker(local_rank, args):
             schedulers=[warmup_scheduler_g, cosine_scheduler_g],
             milestones=[args.warmup_epochs_g])
     else:
-        lr_scheduler_g = cosine_scheduler_g
+        lr_scheduler_g = exp_scheduler_g
 
     optimizer_d = torch.optim.AdamW(
         itertools.chain(stft_disc.parameters(),
@@ -432,7 +459,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         "train_rec": [], "train_g": [], "train_d": [], "train_com": [], "train_feat": [],
         "val_rec": [], "val_g": [], "val_d": [], "val_com": [], "val_feat": [],
     }
-    for epoch in range(args.st_epoch, args.N_EPOCHS + 1):
+    epochs = range(args.st_epoch, args.N_EPOCHS + 1)
+    for epoch in tqdm(epochs, desc='epoch'):
         soundstream.train()
         stft_disc.train()
         msd.train()
@@ -446,17 +474,45 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         grad_norms_g = []
         grad_norms_d = []
         k_iter = 0
+        total_train_iters = len(train_loader)
+        last_10_percent_start = int(total_train_iters * 0.9)
+        train_codes_hist = None
+        train_codes_hist_last10 = None
+        total_train_codes = 0
+        total_train_codes_last10 = 0
         if args.distributed:
             train_loader.sampler.set_epoch(epoch)
-        train_pbar = tqdm(train_loader, desc='train')
-        for x in train_pbar:
+        #train_pbar = tqdm(train_loader, desc='train')
+        #for x in train_pbar:
+        for x in train_loader:
             x = x.to(args.device)
             k_iter += 1
             global_step += 1  # record the global step
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
-                G_x, commit_loss, last_layer, _ = soundstream(x_wav)
+                G_x, commit_loss, last_layer, codes = soundstream(x_wav)
                 if optimizer_idx == 0:
+                    with torch.no_grad():
+                        if train_codes_hist is None:
+                            quantizer_module = soundstream.module.quantizer if hasattr(soundstream, 'module') else soundstream.quantizer
+                            num_q = quantizer_module.n_q
+                            codebook_size = quantizer_module.bins
+                            train_codes_hist = torch.zeros(num_q, codebook_size, device=args.device, dtype=torch.float64)
+                            train_codes_hist_last10 = torch.zeros(num_q, codebook_size, device=args.device, dtype=torch.float64)
+                        
+                        codes_count = codes.shape[1] * codes.shape[2]
+                        total_train_codes += codes_count
+                        is_last10 = k_iter >= last_10_percent_start
+                        if is_last10:
+                            total_train_codes_last10 += codes_count
+                        
+                        for q_idx in range(codes.shape[0]):
+                            codes_q = codes[q_idx, :, :].flatten()
+                            ones = torch.ones_like(codes_q, dtype=torch.float64)
+                            train_codes_hist[q_idx].scatter_add_(0, codes_q, ones)
+                            if is_last10:
+                                train_codes_hist_last10[q_idx].scatter_add_(0, codes_q, ones)
+
                     # Codebook visualization: refit PCA each time for accurate projection
                     if global_step % args.number_of_steps == 0:
                         if not args.distributed or dist.get_rank() == 0:
@@ -512,15 +568,15 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     optimizer_g.step()
                 else:
                     # update discriminator
-                    y_disc_r_det, fmap_r_det = stft_disc(x.detach())
-                    y_disc_gen_det, fmap_gen_det = stft_disc(G_x.detach())
+                    y_disc_r_det, fmap_r_det = stft_disc(x_wav.contiguous().detach())
+                    y_disc_gen_det, fmap_gen_det = stft_disc(G_x.contiguous().detach())
 
                     # MPD
                     y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(
-                        x.detach(), G_x.detach())
+                        x_wav.contiguous().detach(), G_x.contiguous().detach())
                     #MSD
                     y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(
-                        x.detach(), G_x.detach())
+                        x_wav.contiguous().detach(), G_x.contiguous().detach())
 
                     loss_d = loss_dis(
                         y_disc_r_det, y_disc_gen_det, fmap_r_det, fmap_gen_det,
@@ -538,11 +594,11 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                         grad_norms_d.append(torch.cat(_d_grads).norm().item())
 
                     optimizer_d.step()
-            train_pbar.set_postfix(
-                epoch=epoch,
-                rec_loss=f'{rec_loss.item():.4f}',
-                rec_avg=f'{train_rec_loss / k_iter:.4f}',
-                lr_g=f"{optimizer_g.param_groups[0]['lr']:.2e}")
+            # train_pbar.set_postfix(
+            #     epoch=epoch,
+            #     rec_loss=f'{rec_loss.item():.4f}',
+            #     rec_avg=f'{train_rec_loss / k_iter:.4f}',
+            #     lr_g=f"{optimizer_g.param_groups[0]['lr']:.2e}")
             message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}>'.format(
                 epoch, k_iter,
                 total_loss_g.item(),
@@ -563,12 +619,35 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         mean_grad_d = sum(grad_norms_d) / len(grad_norms_d) if grad_norms_d else 0.0
         if not args.distributed or dist.get_rank() == 0:
             print(f"[Epoch {epoch}] Mean grad norm  —  generator: {mean_grad_g:.4e}  |  discriminator: {mean_grad_d:.4e}", flush=True)
+            
+        with torch.no_grad():
+            train_ppl_whole = []
+            if train_codes_hist is not None and total_train_codes > 0:
+                if args.distributed:
+                    dist.all_reduce(train_codes_hist, op=dist.ReduceOp.SUM)
+                probs = train_codes_hist / train_codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+            entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+            train_ppl_whole = torch.exp2(entropy).tolist()
+
+            train_ppl_last10 = []
+            if train_codes_hist_last10 is not None and total_train_codes_last10 > 0:
+                if args.distributed:
+                    dist.all_reduce(train_codes_hist_last10, op=dist.ReduceOp.SUM)
+                probs = train_codes_hist_last10 / train_codes_hist_last10.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+                train_ppl_last10 = torch.exp2(entropy).tolist()
+
         message = '<epoch:{:d}, <total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, adversarial_loss_train:{:.4f}, feature_loss_train:{:.4f}, commit_loss_train:{:.4f}>'.format(
             epoch, avg_train_g, avg_train_rec,
             train_adv_g_loss / len(train_loader),
             train_feat_loss / len(train_loader),
             avg_train_com)
         logger.log_info(message)
+        train_ppl_str = ", ".join([f"{p:.1f}" for p in train_ppl_whole]) if train_ppl_whole else "N/A"
+        train_ppl_last10_str = ", ".join([f"{p:.1f}" for p in train_ppl_last10]) if train_ppl_last10 else "N/A"
+        logger.log_info(f"Train PPL (whole epoch): [{train_ppl_str}]")
+        logger.log_info(f"Train PPL (last 10%): [{train_ppl_last10_str}]")
+
         with torch.no_grad():
             soundstream.eval()
             stft_disc.eval()
@@ -587,7 +666,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             
             if args.distributed:
                 valid_loader.sampler.set_epoch(epoch)
-            for x in tqdm(valid_loader):
+            #for x in tqdm(valid_loader):
+            for x in valid_loader:
                 x = x.to(args.device)
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)

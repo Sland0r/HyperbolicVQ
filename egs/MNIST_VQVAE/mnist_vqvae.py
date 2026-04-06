@@ -3,6 +3,7 @@
 Supports MNIST (1×28×28) and CIFAR-100 (3×32×32).
 """
 import math
+import random
 import torch
 import torch.nn as nn
 from academicodec.quantization import ResidualVectorQuantizer
@@ -96,6 +97,7 @@ class VQVAE2D(nn.Module):
         n_q: int = 4,
         bins: int = 256,
         c: float = 0.0,
+        exponential_lambda: float = 0.0,
         ema: bool = True,
         kmeans_init: bool = False,
         in_channels: int = 1,
@@ -112,11 +114,14 @@ class VQVAE2D(nn.Module):
             kmeans_init=kmeans_init,
         )
         self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size)
+        self.exponential_lambda = exponential_lambda
 
         self.frame_rate = self.encoder.spatial_h * self.encoder.spatial_w  # 16
+        self.n_q = n_q
         self.target_bandwidths = [
             n_q * math.log2(bins) * self.frame_rate / 1000
         ]
+        print('target_bandwidths', self.target_bandwidths)
 
     def forward(self, x):
         """
@@ -129,8 +134,13 @@ class VQVAE2D(nn.Module):
         """
         z = self.encoder(x)
         bw = self.target_bandwidths[-1]
+        if self.exponential_lambda > 0.0:
+            nq = min(self.n_q, int(random.expovariate(self.exponential_lambda)))
+        else:
+            nq = random.randint(1, self.n_q)
+        
         quantized, codes, bandwidth, commit_loss = self.quantizer(
-            z, self.frame_rate, bw
+            z, self.frame_rate, bw, nq = nq
         )
         x_hat = self.decoder(quantized)
         return x_hat, commit_loss, codes
