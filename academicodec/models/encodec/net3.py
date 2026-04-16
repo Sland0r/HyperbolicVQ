@@ -20,6 +20,8 @@ class SoundStream(nn.Module):
                  bins=1024,
                  normalize=False,
                  threshold_ema_dead_code=2,
+                 codebook_weight: float=1.0,
+                 commitment_weight: float=0.25,
                  c: float=0.0,
                  ema: bool=True,
                  kmeans_init: bool=True,
@@ -37,7 +39,8 @@ class SoundStream(nn.Module):
         self.exponential_lambda = exponential_lambda
         self.threshold_ema_dead_code = threshold_ema_dead_code
         self.quantizer = ResidualVectorQuantizer(
-            dimension=D, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, c=c,
+            dimension=D, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, 
+            codebook_weight=codebook_weight, commitment_weight=commitment_weight, c=c,
             ema=ema, kmeans_init=kmeans_init, remove=remove)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
@@ -47,7 +50,7 @@ class SoundStream(nn.Module):
     def get_last_layer(self):
         return self.decoder.layers[-1].weight
 
-    def forward(self, x):
+    def forward(self, x, validation=False):
         e = self.encoder(x)
         e = self.pre_quant_bn(e)
         max_idx = len(self.target_bandwidths) - 1
@@ -56,10 +59,17 @@ class SoundStream(nn.Module):
             bw = self.target_bandwidths[idx]
         else:
             bw = self.target_bandwidths[random.randint(0, max_idx)] 
-        quantized, codes, bandwidth, commit_loss = self.quantizer(
-            e, self.frame_rate, bw)
-        o = self.decoder(quantized)
-        return o, commit_loss, None, codes
+            
+        if validation:
+            quantized, codes, bandwidth, commit_loss, dot_vec = self.quantizer(
+                e, self.frame_rate, bw, validation=validation)
+            o = self.decoder(quantized)
+            return o, commit_loss, None, codes, dot_vec
+        else:
+            quantized, codes, bandwidth, commit_loss = self.quantizer(
+                e, self.frame_rate, bw, validation=validation)
+            o = self.decoder(quantized)
+            return o, commit_loss, None, codes
 
     def encode(self, x, target_bw=None, st=None):
         e = self.encoder(x)

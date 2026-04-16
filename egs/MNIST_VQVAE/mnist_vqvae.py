@@ -29,18 +29,22 @@ class Encoder(nn.Module):
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 128, kernel_size=k3, stride=2, padding=1),
+            nn.Conv2d(64, 128, kernel_size=k3, stride=2, padding=1), # (B, 128, 4, 4)
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, D, kernel_size=1),
+            nn.Conv2d(128, D, kernel_size=1), # (B, D, 4, 4)
         )
+        
         self.spatial_h = 4
         self.spatial_w = 4
+        self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D)
 
     def forward(self, x):
         z = self.net(x)  # (B, D, 4, 4)
         B, D, H, W = z.shape
-        z = z.view(B, D, H * W)  # (B, D, N) with N=16
+        z = z.view(B, D * H * W)  # (B, D * N) with N=16
+        z = self.bottleneck(z) # (B, D)
+        z = z.unsqueeze(-1) # (B, D, 1)
         return z
 
 
@@ -55,6 +59,7 @@ class Decoder(nn.Module):
         self.spatial_h = 4
         self.spatial_w = 4
         # First transposed conv uses k=3 for 28×28 (4→7) and k=4 for 32×32 (4→8)
+        self.bottleneck = nn.Linear(D, D * self.spatial_h * self.spatial_w)
         k3 = 3 if img_size == 28 else 4
         self.net = nn.Sequential(
             nn.Conv2d(D, 128, kernel_size=1),
@@ -71,8 +76,9 @@ class Decoder(nn.Module):
         )
 
     def forward(self, z):
-        B, D, N = z.shape
-        z = z.view(B, D, self.spatial_h, self.spatial_w)
+        z = z.squeeze(-1) # (B, D)
+        B, D = z.shape
+        z = self.bottleneck(z).view(B, D, self.spatial_h, self.spatial_w) # (B, D, 4, 4)
         x_hat = self.net(z)
         return x_hat
 
@@ -98,8 +104,14 @@ class VQVAE2D(nn.Module):
         bins: int = 256,
         c: float = 0.0,
         exponential_lambda: float = 0.0,
-        ema: bool = True,
+        uniform: bool = False,
+        ema: bool = False,
         kmeans_init: bool = False,
+        threshold_ema_dead_code: int=2, 
+        codebook_weight: float=1.0,
+        commitment_weight: float=0.25,
+        dot_product_weight: float=0.0,
+        entailment_cone_weight: float=0.0,
         in_channels: int = 1,
         img_size: int = 28,
     ):
@@ -109,41 +121,56 @@ class VQVAE2D(nn.Module):
             dimension=D,
             n_q=n_q,
             bins=bins,
+            kmeans_init=kmeans_init,
+            threshold_ema_dead_code=threshold_ema_dead_code, 
+            codebook_weight=codebook_weight,
+            commitment_weight=commitment_weight,
+            dot_product_weight=dot_product_weight,
+            entailment_cone_weight=entailment_cone_weight,
             c=c,
             ema=ema,
-            kmeans_init=kmeans_init,
         )
         self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size)
         self.exponential_lambda = exponential_lambda
+        self.uniform = uniform
 
-        self.frame_rate = self.encoder.spatial_h * self.encoder.spatial_w  # 16
+        self.frame_rate = 1 # since N=1 due to the linear bottleneck
         self.n_q = n_q
         self.target_bandwidths = [
             n_q * math.log2(bins) * self.frame_rate / 1000
         ]
         print('target_bandwidths', self.target_bandwidths)
 
-    def forward(self, x):
+    def forward(self, x, validation=False):
         """
         Args:
             x: (B, C, H, W) images in [0, 1].
         Returns:
             x_hat: reconstructed images.
-            commit_loss: scalar commitment loss.
+            latent_loss: scalar commitment loss.
             codes: quantizer indices (n_q, B, N).
         """
-        z = self.encoder(x)
+        z = self.encoder(x) # (B, D, 4, 4)
         bw = self.target_bandwidths[-1]
         if self.exponential_lambda > 0.0:
             nq = min(self.n_q, int(random.expovariate(self.exponential_lambda)))
-        else:
+        elif self.uniform:
             nq = random.randint(1, self.n_q)
+        else:
+            nq = self.n_q
         
-        quantized, codes, bandwidth, commit_loss = self.quantizer(
-            z, self.frame_rate, bw, nq = nq
-        )
-        x_hat = self.decoder(quantized)
-        return x_hat, commit_loss, codes
+        if validation:
+            quantized, codes, bandwidth, latent_loss, dot_vec = self.quantizer(
+                z, self.frame_rate, bw, nq = nq, validation=validation
+            )
+            x_hat = self.decoder(quantized)
+            return x_hat, latent_loss, codes, dot_vec
+        else:
+            quantized, codes, bandwidth, latent_loss = self.quantizer(
+                z, self.frame_rate, bw, nq = nq, validation=validation
+            )
+            x_hat = self.decoder(quantized)
+            return x_hat, latent_loss, codes
 
     def encode(self, x):
         z = self.encoder(x)
@@ -173,5 +200,5 @@ if __name__ == "__main__":
         total, trainable = _count_params(model)
         print(f"{name}: Total params: {total:,}  Trainable: {trainable:,}")
         x = torch.randn(2, ch, sz, sz).clamp(0, 1)
-        x_hat, commit_loss, codes = model(x)
-        print(f"  Input: {x.shape}  Output: {x_hat.shape}  Codes: {codes.shape}  Commit: {commit_loss.item():.4f}")
+        x_hat, latent_loss, codes = model(x)
+        print(f"  Input: {x.shape}  Output: {x_hat.shape}  Codes: {codes.shape}  Latent: {latent_loss.item():.4f}")

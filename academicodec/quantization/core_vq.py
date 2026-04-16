@@ -37,6 +37,9 @@ from einops import rearrange
 from einops import repeat
 from torch import nn
 import geoopt
+import sys
+sys.path.insert(0, '/home/acolombo/music')
+from hyp_modules import HyperbolicEntailmentConeLoss
 
 from academicodec.quantization.distrib import broadcast_tensors
 
@@ -277,6 +280,10 @@ class EuclideanCodebook(nn.Module):
         self.epsilon = epsilon
         self.threshold_ema_dead_code = threshold_ema_dead_code
 
+        if self.c > 0:
+            # Ensure random initialization is on the manifold when k-means init is disabled.
+            embed = project(embed, self.c)
+
         self.register_buffer("inited", torch.Tensor([not kmeans_init]))
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         if not self.ema:
@@ -287,6 +294,12 @@ class EuclideanCodebook(nn.Module):
         else:
             self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
+
+    def _project_embed_inplace_(self):
+        if self.c <= 0:
+            return
+        with torch.no_grad():
+            self.embed.data.copy_(project(self.embed.data, self.c))
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -358,6 +371,7 @@ class EuclideanCodebook(nn.Module):
         return quantize
 
     def encode(self, x):
+        self._project_embed_inplace_()
         shape = x.shape
         # pre-process
         x = self.preprocess(x)
@@ -368,10 +382,12 @@ class EuclideanCodebook(nn.Module):
         return embed_ind
 
     def decode(self, embed_ind):
+        self._project_embed_inplace_()
         quantize = self.dequantize(embed_ind)
         return quantize
 
     def forward(self, x):
+        self._project_embed_inplace_()
         shape, dtype = x.shape, x.dtype
         x = self.preprocess(x) # (everything, dim)
         #assert_finite(x, "EuclideanCodebook.forward/x(preprocess)")
@@ -454,6 +470,7 @@ class VectorQuantization(nn.Module):
             kmeans_init: bool=True,
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2,
+            codebook_weight: float=1.0,
             commitment_weight: float=0.25,
             c: float=0.,
             remove: int=0,
@@ -461,7 +478,7 @@ class VectorQuantization(nn.Module):
         super().__init__()
         self.c = c
         self.ema = ema
-        self.alpha = 1.0
+        
         _codebook_dim: int = default(codebook_dim, dim)
 
         requires_projection = _codebook_dim != dim
@@ -472,6 +489,7 @@ class VectorQuantization(nn.Module):
 
         self.epsilon = epsilon
         self.commitment_weight = commitment_weight
+        self.codebook_weight = codebook_weight
 
         self._codebook = EuclideanCodebook(
             dim=_codebook_dim,
@@ -535,7 +553,7 @@ class VectorQuantization(nn.Module):
                     codebook_loss = hyperbolic_distance_sq(x.detach(), quantize_raw, self.c).mean()
                 else:
                     codebook_loss = F.mse_loss(x.detach(), quantize_raw)
-                loss = loss + codebook_loss * self.alpha
+                loss = loss + codebook_loss * self.codebook_weight
 
         quantize = self.project_out(quantize)
         quantize = rearrange(quantize, "b n d -> b d n")
@@ -550,11 +568,15 @@ class ResidualVectorQuantization(nn.Module):
     def __init__(self, *, num_quantizers, **kwargs):
         super().__init__()
         self.c = kwargs.get("c", 0.0)
+        self.dot_product_weight = kwargs.pop("dot_product_weight", 0.0)
+        self.entailment_cone_weight = kwargs.pop("entailment_cone_weight", 0.0)
+        if self.entailment_cone_weight > 0 and self.c > 0:
+            self.entailment_cone_loss_fn = HyperbolicEntailmentConeLoss(K=0.1, c=self.c)
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
         self.remove = kwargs.get("remove", 0)
 
-    def forward(self, x, n_q: tp.Optional[int]=None):
+    def forward(self, x, n_q: tp.Optional[int]=None, validation=False):
         if self.c > 0:
             residual = project(exp_map0(x, self.c), self.c)
         else:
@@ -563,18 +585,43 @@ class ResidualVectorQuantization(nn.Module):
         quantized_out = torch.zeros_like(residual)
         all_losses = []
         all_indices = []
+        all_dots = []
 
-        n_q = n_q or len(self.layers)
+        n_q = len(self.layers)
         n_q = n_q - self.remove
 
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
+                
             if self.c > 0:
                 residual = project(mobius_sub(residual, quantized, self.c), self.c)
+                q_log = log_map0(quantized, self.c).detach()
+                r_log = log_map0(residual, self.c)
+                dot_p_vec = ((q_log * r_log).sum(dim=1) / q_log.norm(dim=1).clamp_min(1e-5))
                 quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
             else:
                 residual = residual - quantized
+                dot_p_vec = (quantized.detach() * residual).sum(dim=1) / quantized.norm(dim=1).clamp_min(1e-5).detach()
                 quantized_out = quantized_out + quantized
+                
+            dot_p_scalar = dot_p_vec.mean()
+            
+            if validation:
+                all_dots.append(dot_p_vec.flatten())
+
+            # Negative Dot Product -> Expansion  
+            if dot_p_scalar < 0:
+                loss = loss - self.dot_product_weight * dot_p_scalar # dot_p is negative, so we subtract it to make the loss bigger
+
+            # Entailment Cone Loss: push residual into the cone of quantized
+            if self.entailment_cone_weight > 0 and self.c > 0:
+                # quantized.detach() is parent (u), residual is child (v)
+                # Gradients only flow through the residual
+                # Reshape from (B, D, N) to (B*N, D) for the cone loss
+                q_flat = rearrange(quantized.detach(), "b d n -> (b n) d")
+                r_flat = rearrange(residual, "b d n -> (b n) d")
+                cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
+                loss = loss + self.entailment_cone_weight * cone_loss
 
             all_indices.append(indices)
             all_losses.append(loss)
@@ -583,6 +630,8 @@ class ResidualVectorQuantization(nn.Module):
             quantized_out = log_map0(quantized_out, self.c)
 
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
+        if validation:
+            return quantized_out, out_indices, out_losses, torch.stack(all_dots)
         return quantized_out, out_indices, out_losses
 
     def encode(self,

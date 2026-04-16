@@ -13,11 +13,22 @@ module load Anaconda3/2025.06-1
 source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
-CHECKPOINT="/home/acolombo/VAEs/checkpoint/mnist_vqvae/21520796/latest.pth"
+CHECKPOINT="/home/acolombo/VAEs/checkpoint/mnist_vqvae/h1_ndot5_lat1_com0025_sep3/latest.pth"
+
+echo "Checking codes for checkpoint: $CHECKPOINT"
+
+python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/check_codes.py \
+        --checkpoint $CHECKPOINT
+
+echo "Done checking codes for checkpoint: $CHECKPOINT"
+echo "Generating image hierarchy plot..."
 
 python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/check_codes.py \
         --checkpoint $CHECKPOINT \
-        
+        --plot_images
+
+echo "Generating validation scatter plot..."
+
 python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/check_codes.py \
         --checkpoint $CHECKPOINT \
-        --plot_images
+        --val_scatter

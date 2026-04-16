@@ -172,6 +172,16 @@ def get_args():
         default=0.4,
         help='exponential_lambda of codebook dropout')
     parser.add_argument(
+        '--codebook_weight',
+        type=float,
+        default=1.0,
+        help='weight of codebook loss')
+    parser.add_argument(
+        '--commitment_weight',
+        type=float,
+        default=0.25,
+        help='weight of commitment loss')
+    parser.add_argument(
         '--remove',
         type=int,
         default=0,
@@ -263,7 +273,7 @@ def main():
     if args.seed is not None or args.cudnn_deterministic:
         seed_everything(args.seed, args.cudnn_deterministic)
     if args.num_node == 1:
-        args.dist_url == "auto"
+        args.dist_url = "auto"
     else:
         assert args.num_node > 1
     args.ngpus_per_node = torch.cuda.device_count()
@@ -287,8 +297,8 @@ def main_worker(local_rank, args):
     logger = Logger(args)
     # 240倍下采
     soundstream = SoundStream(n_filters=32, D=512, target_bandwidths=args.target_bandwidths, exponential_lambda=args.exponential_lambda,
-                              ratios=args.ratios, sample_rate=args.sr, bins=args.bins, c=args.c,
-                              ema=args.ema, kmeans_init=args.kmeans_init,
+                              codebook_weight=args.codebook_weight, commitment_weight=args.commitment_weight, ratios=args.ratios, 
+                              sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
@@ -663,6 +673,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             # For tracking perplexity / usage of codebooks
             codes_hist = None
             total_valid_codes = 0
+            all_val_dots = []
             
             if args.distributed:
                 valid_loader.sampler.set_epoch(epoch)
@@ -672,8 +683,9 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)
                     # G_x is the reconstructed waveform, codes is the indices
-                    G_x, commit_loss, last_layer, codes = soundstream(x_wav)
+                    G_x, commit_loss, last_layer, codes, dot_vec = soundstream(x_wav, validation=True)
                     if optimizer_idx == 0:
+                        all_val_dots.append(dot_vec.cpu())
                         # Tracking Codebook Perplexity
                         # codes shape: [num_quantizers, batch, time]
                         if codes_hist is None:
@@ -735,6 +747,35 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                                              fmap_s_r, fmap_s_g)
                         valid_loss_d += loss_d.item()
                         
+            # Calculate validation dot product metrics
+            if len(all_val_dots) > 0:
+                max_nq = max(v.shape[0] for v in all_val_dots)
+                
+                sum_dots = torch.zeros(max_nq, device=args.device)
+                count_dots = torch.zeros(max_nq, device=args.device)
+                pos_dots = torch.zeros(max_nq, device=args.device)
+                neg_dots = torch.zeros(max_nq, device=args.device)
+                
+                for v in all_val_dots:
+                    nq, num_elements = v.shape
+                    v = v.to(args.device)
+                    sum_dots[:nq] += v.sum(dim=1)
+                    count_dots[:nq] += num_elements
+                    pos_dots[:nq] += (v > 0).float().sum(dim=1)
+                    neg_dots[:nq] += (v < 0).float().sum(dim=1)
+                
+                avg_val_dots = sum_dots / count_dots.clamp_min(1.0)
+                pos_perc = pos_dots / count_dots.clamp_min(1.0) * 100
+                neg_perc = neg_dots / count_dots.clamp_min(1.0) * 100
+                
+                avg_dots_str = ", ".join([f"{v:.4f}" for v in avg_val_dots])
+                pos_perc_str = ", ".join([f"{v:.1f}%" for v in pos_perc])
+                neg_perc_str = ", ".join([f"{v:.1f}%" for v in neg_perc])
+                
+                logger.log_info(f"  [Epoch {epoch}] Validation Avg Dot Products: [{avg_dots_str}]")
+                logger.log_info(f"  [Epoch {epoch}] Validation Dot Products > 0: [{pos_perc_str}]")
+                logger.log_info(f"  [Epoch {epoch}] Validation Dot Products < 0: [{neg_perc_str}]")
+
             # Calculate perplexity: 2^{H(p)}
             perplexities = []
             if codes_hist is not None and total_valid_codes > 0:

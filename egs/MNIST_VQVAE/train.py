@@ -2,6 +2,7 @@
 import argparse
 import glob
 import math
+from academicodec.quantization.core_vq import pairwise_hyperbolic_distance_sq
 import os
 import time
 import matplotlib
@@ -60,14 +61,35 @@ def get_args():
         '--kmeans_init', action='store_true',
         help='use kmeans_init for codebook (default: False)')
     parser.add_argument(
+        '--threshold_ema_dead_code', type=int, default=2,
+        help='threshold_ema_dead_code for codebook (default: 2)')
+    parser.add_argument(
+        '--codebook_weight', type=float, default=1.0,
+        help='codebook_weight for codebook (default: 1.0)')
+    parser.add_argument(
+        '--commitment_weight', type=float, default=0.25,
+        help='commitment_weight for codebook (default: 0.25)')
+    parser.add_argument(
+        '--dot_product_weight', type=float, default=0.0,
+        help='dot_product_weight for codebook (default: 0.0)')
+    parser.add_argument(
+        '--entailment_cone_weight', type=float, default=0.0,
+        help='entailment_cone_weight for codebook (default: 0.0)')
+    parser.add_argument(
         '--pre_quant_batchnorm', action='store_true',
         help='apply BatchNorm1d on encoder output right before quantization')
     parser.add_argument(
         '--exponential_lambda', type=float, default=0.0,
         help='exponential_lambda of codebook dropout')
     parser.add_argument(
+        '--uniform', action='store_true', 
+        help='uniform codebook dropout')
+    parser.add_argument(
         '--remove', type=int, default=0,
         help='number of codebooks to remove (default: 0)')
+    parser.add_argument(
+        '--constructive', action='store_true',
+        help='initialize codebooks using constructive tree embeddings (depth=1)')
     # args for training
     parser.add_argument(
         '--N_EPOCHS', type=int, default=50,
@@ -82,8 +104,11 @@ def get_args():
         '--BATCH_SIZE', type=int, default=128,
         help='batch size')
     parser.add_argument(
-        '--LAMBDA_COM', type=float, default=1.0,
-        help='hyper-parameter for commit loss')
+        '--LAMBDA_LAT', type=float, default=1.0,
+        help='hyper-parameter for latent loss')
+    parser.add_argument(
+        '--LAMBDA_SEP', type=float, default=1e-5,
+        help='hyper-parameter for codebook separation loss (0 = disabled)')
     parser.add_argument(
         '--print_freq', type=int, default=100,
         help='print every N batches')
@@ -150,6 +175,7 @@ def get_args():
 
 
 from academicodec.utils import Logger
+from ppl_utils import accumulate_train_codes, compute_train_ppl, accumulate_val_codes, compute_val_ppl
 
 def main():
     args = get_args()
@@ -190,14 +216,66 @@ def main():
     # ── Model ─────────────────────────────────────────────────────────
     from mnist_vqvae import VQVAE2D, _count_params
 
+    if args.constructive:
+        args.threshold_ema_dead_code = 0
+
     model = VQVAE2D(
         D=args.D, n_q=args.n_q, bins=args.bins, c=args.c, 
-        exponential_lambda=args.exponential_lambda, ema=args.ema, 
-        kmeans_init=args.kmeans_init, in_channels=in_channels, img_size=img_size,
+        exponential_lambda=args.exponential_lambda, uniform=args.uniform, ema=args.ema, 
+        kmeans_init=args.kmeans_init, 
+        threshold_ema_dead_code=args.threshold_ema_dead_code, 
+        codebook_weight=args.codebook_weight,
+        commitment_weight=args.commitment_weight,
+        dot_product_weight=args.dot_product_weight,
+        entailment_cone_weight=args.entailment_cone_weight,
+        in_channels=in_channels, img_size=img_size,
     ).to(device)
     logger.log_info(model)
     total, trainable = _count_params(model)
     logger.log_info(f"Model params — total: {total:,}  trainable: {trainable:,}")
+
+    # ── Constructive codebook initialisation ──────────────────────
+    if args.constructive:
+        import sys
+        sys.path.insert(0, '/home/acolombo/music/hyperbolic_tree_embeddings')
+        from tree_embeddings.trees.file_utils import load_hierarchy
+        from tree_embeddings.embeddings.constructive_method import constructively_embed_tree
+
+        # Balanced tree: bins children at depth 1 → bins+1 nodes total
+        hierarchy = load_hierarchy(dataset="n_h_trees", hierarchy_name=f"{args.bins}_1")
+
+        curvature = args.c if args.c > 0 else 1.0
+        embeddings, _, _ = constructively_embed_tree(
+            hierarchy=hierarchy,
+            dataset="n_h_trees",
+            hierarchy_name=f"{args.bins}_1",
+            embedding_dim=args.D,
+            tau=1.0,
+            nc=1,
+            curvature=curvature,
+            root=0,
+            gen_type="optim",
+            dtype=torch.float64,
+        )
+
+        # Skip root (index 0, at origin); keep the bins children
+        code_points = embeddings[1:].to(dtype=torch.float32, device=device)  # (bins, D)
+        assert code_points.shape == (args.bins, args.D), \
+            f"Expected ({args.bins}, {args.D}), got {code_points.shape}"
+
+        # Copy same points into every codebook
+        with torch.no_grad():
+            for qi in range(args.n_q):
+                cb = model.quantizer.vq.layers[qi]._codebook
+                cb.embed.data.copy_(code_points)
+                cb.embed_avg.data.copy_(code_points)
+                cb.inited.data.copy_(torch.Tensor([True]))
+                cb.cluster_size.data.fill_(args.threshold_ema_dead_code + 1)
+
+        logger.log_info(
+            f"Constructive init: {code_points.shape} points copied to all "
+            f"{args.n_q} codebooks (curvature={curvature}, tau=1.0)"
+        )
 
     if args.c > 0:
         manifold_params = []
@@ -250,13 +328,13 @@ def main():
     # ── Training loop ─────────────────────────────────────────────────
     best_val_loss = float("inf")
     best_val_epoch = -1
-    history = {"train_rec": [], "train_com": [], "val_rec": [], "val_com": [], "val_total": []}
+    history = {"train_rec": [], "train_com": [], "val_rec": [], "val_com": [], "val_total": [], "train_sep": []}
     all_val_ppls = []    # list of per-epoch val PPL lists  (one list per epoch)
     all_train_ppls = []  # list of per-epoch train PPL lists (whole epoch)
     pbar = tqdm(range(st_epoch, args.N_EPOCHS + 1), desc="Training")
     for epoch in pbar:
         model.train()
-        train_rec, train_com, n_batches = 0.0, 0.0, 0
+        train_rec, train_com, train_sep_sum, n_batches = 0.0, 0.0, 0.0, 0
         total_fw_time, total_bw_time, total_iter_time = 0.0, 0.0, 0.0
 
         # ── Train PPL histograms ────────────────────────────────────
@@ -273,9 +351,9 @@ def main():
             imgs = imgs.to(device)
 
             t_fw_start = time.time()
-            x_hat, commit_loss, codes = model(imgs)
+            x_hat, latent_loss, codes = model(imgs)
             rec_loss = F.mse_loss(x_hat, imgs)
-            loss = rec_loss + args.LAMBDA_COM * commit_loss
+            loss = rec_loss + args.LAMBDA_LAT * latent_loss
             t_fw_end = time.time()
             total_fw_time += (t_fw_end - t_fw_start)
 
@@ -284,32 +362,43 @@ def main():
             loss.backward()
             # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+
+            # ── Codebook separation loss ──────────────────────────
+            sep_loss_val = 0.0
+            if args.LAMBDA_SEP > 0:
+                sep_loss = torch.tensor(0.0, device=device)
+                n_q_active = len(model.quantizer.vq.layers)
+                for qi in range(n_q_active):
+                    embed = model.quantizer.vq.layers[qi]._codebook.embed  # (codebook_size, D)
+                    if args.c > 0:
+                        dist_matrix = pairwise_hyperbolic_distance_sq(embed, embed, args.c)
+                    else:
+                        diff = embed.unsqueeze(0) - embed.unsqueeze(1)  # (K, K, D)
+                        dist_matrix = diff.pow(2).sum(-1)               # (K, K)
+                    # dist_matrix is symmetric with zero diagonal;
+                    # minimize negative sum -> maximise total pairwise distance
+                    sep_loss = sep_loss - dist_matrix.sum()
+                sep_loss = args.LAMBDA_SEP * sep_loss
+                optimizer.zero_grad()
+                sep_loss.backward()
+                optimizer.step()
+                sep_loss_val = sep_loss.item()
+            train_sep_sum += sep_loss_val
+
             t_bw_end = time.time()
             total_bw_time += (t_bw_end - t_bw_start)
             global_step += 1
 
             train_rec += rec_loss.item()
-            train_com += commit_loss.item()
+            train_com += latent_loss.item()
             n_batches += 1
 
             # ── Accumulate train code usage for PPL ──────────────
             with torch.no_grad():
-                if train_codes_hist is None:
-                    num_q = codes.shape[0]
-                    codebook_size = args.bins
-                    train_codes_hist = torch.zeros(num_q, codebook_size, device=device)
-                    train_codes_hist_last10 = torch.zeros(num_q, codebook_size, device=device)
-                codes_count = codes.shape[1] * codes.shape[2]  # B * N
-                total_train_codes += codes_count
-                is_last10 = batch_idx > last_10_percent_start
-                if is_last10:
-                    total_train_codes_last10 += codes_count
-                for q_idx in range(codes.shape[0]):
-                    codes_q = codes[q_idx].flatten()
-                    ones = torch.ones_like(codes_q, dtype=torch.float32)
-                    train_codes_hist[q_idx].scatter_add_(0, codes_q, ones)
-                    if is_last10:
-                        train_codes_hist_last10[q_idx].scatter_add_(0, codes_q, ones)
+                train_codes_hist, train_codes_hist_last10, total_train_codes, total_train_codes_last10 = \
+                    accumulate_train_codes(codes, train_codes_hist, train_codes_hist_last10,
+                                           total_train_codes, total_train_codes_last10,
+                                           args.bins, batch_idx, last_10_percent_start, device, args.n_q)
 
             # ── Codebook snapshot ──────────────────────────────────
             if not pca_fitted:
@@ -326,8 +415,8 @@ def main():
                 plot_codes(codes_cb, pca_model, args.c, global_step, codebook_plots_dir)
 
             if batch_idx % args.print_freq == 0:
-                message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}>'.format(
-                    epoch, batch_idx, loss.item(), rec_loss.item(), commit_loss.item())
+                message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, rec_loss:{:.4f}, latent_loss:{:.4f}, sep_loss:{:.6f}>'.format(
+                    epoch, batch_idx, loss.item(), rec_loss.item(), latent_loss.item(), sep_loss_val)
                 logger.log_info(message)
 
             t0 = time.time()
@@ -335,20 +424,12 @@ def main():
         scheduler.step()
         train_rec /= n_batches
         train_com /= n_batches
+        train_sep_avg = train_sep_sum / n_batches
 
         # ── Compute and log train PPL ────────────────────────────────
         with torch.no_grad():
-            train_ppl_whole = []
-            if train_codes_hist is not None and total_train_codes > 0:
-                probs = train_codes_hist / train_codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
-                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
-                train_ppl_whole = torch.exp2(entropy).tolist()
-
-            train_ppl_last10 = []
-            if train_codes_hist_last10 is not None and total_train_codes_last10 > 0:
-                probs = train_codes_hist_last10 / train_codes_hist_last10.sum(dim=-1, keepdim=True).clamp_min(1e-10)
-                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
-                train_ppl_last10 = torch.exp2(entropy).tolist()
+            train_ppl_whole = compute_train_ppl(train_codes_hist, total_train_codes)
+            train_ppl_last10 = compute_train_ppl(train_codes_hist_last10, total_train_codes_last10)
 
         all_train_ppls.append(train_ppl_whole)
         train_ppl_str = ", ".join([f"{p:.1f}" for p in train_ppl_whole]) if train_ppl_whole else "N/A"
@@ -365,25 +446,54 @@ def main():
         model.eval()
         val_rec, val_com, val_n = 0.0, 0.0, 0
         codes_hist = None
+        all_val_dots = []
         with torch.no_grad():
             for imgs, _ in val_loader:
                 imgs = imgs.to(device)
-                x_hat, commit_loss, codes = model(imgs)
+                x_hat, latent_loss, codes, dot_vec = model(imgs, validation=True)
+                all_val_dots.append(dot_vec.cpu())
                 rec_loss = F.mse_loss(x_hat, imgs)
                 val_rec += rec_loss.item()
-                val_com += commit_loss.item()
+                val_com += latent_loss.item()
                 val_n += 1
 
                 # Accumulate code usage: codes shape is (n_q, B, N)
-                if codes_hist is None:
-                    codes_hist = torch.zeros(codes.shape[0], args.bins, device=device)
-                for q in range(codes.shape[0]):
-                    codes_hist[q].scatter_add_(0, codes[q].flatten(), torch.ones(codes[q].numel(), device=device))
+                codes_hist = accumulate_val_codes(codes, codes_hist, args.bins, device, args.n_q)
 
         val_rec /= val_n
         val_com /= val_n
-        val_total = val_rec + args.LAMBDA_COM * val_com
+        val_total = val_rec + args.LAMBDA_LAT * val_com
+        
+        # Calculate validation dot product metrics
+        if len(all_val_dots) > 0:
+            max_nq = max(v.shape[0] for v in all_val_dots)
+            
+            sum_dots = torch.zeros(max_nq, device=device)
+            count_dots = torch.zeros(max_nq, device=device)
+            pos_dots = torch.zeros(max_nq, device=device)
+            neg_dots = torch.zeros(max_nq, device=device)
+            
+            for v in all_val_dots:
+                nq, num_elements = v.shape
+                v = v.to(device)
+                sum_dots[:nq] += v.sum(dim=1)
+                count_dots[:nq] += num_elements
+                pos_dots[:nq] += (v > 0).float().sum(dim=1)
+                neg_dots[:nq] += (v < 0).float().sum(dim=1)
+            
+            avg_val_dots = sum_dots / count_dots.clamp_min(1.0)
+            pos_perc = pos_dots / count_dots.clamp_min(1.0) * 100
+            neg_perc = neg_dots / count_dots.clamp_min(1.0) * 100
+            
+            avg_dots_str = ", ".join([f"{v:.4f}" for v in avg_val_dots])
+            pos_perc_str = ", ".join([f"{v:.3f}%" for v in pos_perc])
+            neg_perc_str = ", ".join([f"{v:.3f}%" for v in neg_perc])
+            
+            logger.log_info(f"  [Epoch {epoch}] Validation Avg Dot Products: [{avg_dots_str}]")
+            logger.log_info(f"  [Epoch {epoch}] Validation Dot Products > 0: [{pos_perc_str}]")
+            logger.log_info(f"  [Epoch {epoch}] Validation Dot Products < 0: [{neg_perc_str}]")
 
+        history["train_sep"].append(train_sep_avg)
         history["train_rec"].append(train_rec)
         history["train_com"].append(train_com)
         history["val_rec"].append(val_rec)
@@ -392,19 +502,12 @@ def main():
 
         pbar.set_postfix(train_rec=f"{train_rec:.4f}", val_rec=f"{val_rec:.4f}", val_total=f"{val_total:.4f}")
 
-        message_train = '<epoch:{:d}, total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, commit_loss_train:{:.4f}>'.format(
-            epoch, train_rec + args.LAMBDA_COM * train_com, train_rec, train_com)
+        message_train = '<epoch:{:d}, total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, latent_loss_train:{:.4f}, sep_loss_train:{:.6f}>'.format(
+            epoch, train_rec + args.LAMBDA_LAT * train_com, train_rec, train_com, train_sep_avg)
         logger.log_info(message_train)
 
         # Compute & store validation PPL per codebook
-        val_ppls = []
-        if codes_hist is not None:
-            for q in range(codes_hist.shape[0]):
-                sizes = codes_hist[q].long().tolist()
-                sizes = [s / sum(sizes) for s in sizes]
-                entropy = -sum(p * math.log2(p) for p in sizes if p > 0)
-                perplexity = 2 ** entropy
-                val_ppls.append(perplexity)
+        val_ppls = compute_val_ppl(codes_hist)
         all_val_ppls.append(val_ppls)
         ppl_str = ", ".join([f"{p:.1f}" for p in val_ppls]) if val_ppls else "N/A"
 
@@ -433,7 +536,7 @@ def main():
                 best_val_loss = val_total
                 best_val_epoch = epoch
 
-        message_val = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, ppl:[{}], best_epoch:{:d}>'.format(
+        message_val = '<epoch:{:d}, total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, latent_loss_valid:{:.4f}, ppl:[{}], best_epoch:{:d}>'.format(
             epoch, val_total, val_rec, val_com, ppl_str, best_val_epoch)
         logger.log_info(message_val)
 
@@ -458,14 +561,14 @@ def main():
         with torch.no_grad():
             for imgs, _ in val_loader:
                 imgs = imgs.to(device)
-                x_hat, commit_loss, codes = model(imgs)
+                x_hat, latent_loss, codes = model(imgs)
                 rec_loss = F.mse_loss(x_hat, imgs)
                 best_val_rec += rec_loss.item()
-                best_val_com += commit_loss.item()
+                best_val_com += latent_loss.item()
                 best_val_n += 1
         best_val_rec /= best_val_n
         best_val_com /= best_val_n
-        best_val_total = best_val_rec + args.LAMBDA_COM * best_val_com
+        best_val_total = best_val_rec + args.LAMBDA_LAT * best_val_com
         best_epoch = best_ckpt["epoch"]
 
         logger.log_info(f"  Best model  (epoch {best_epoch}):  val_rec={best_val_rec:.5f}  "
@@ -525,7 +628,7 @@ def main():
     axes[1].legend()
     axes[1].grid(True)
 
-    train_total = [r + args.LAMBDA_COM * c for r, c in zip(history["train_rec"], history["train_com"])]
+    train_total = [r + args.LAMBDA_LAT * c for r, c in zip(history["train_rec"], history["train_com"])]
     axes[2].plot(epochs_range, train_total, label="Train")
     axes[2].plot(epochs_range, history["val_total"], label="Val")
     axes[2].set_title("Total Loss")

@@ -47,6 +47,10 @@ class ResidualVectorQuantizer(nn.Module):
             kmeans_init: bool=True,
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2, 
+            codebook_weight: float=1.0,
+            commitment_weight: float=0.25,
+            dot_product_weight: float=0.0,
+            entailment_cone_weight: float=0.0,
             c: float=0.0,
             remove: int=0,
             ema: bool=True,
@@ -70,6 +74,10 @@ class ResidualVectorQuantizer(nn.Module):
             kmeans_init=self.kmeans_init,
             kmeans_iters=self.kmeans_iters,
             threshold_ema_dead_code=self.threshold_ema_dead_code,
+            codebook_weight=codebook_weight,
+            commitment_weight=commitment_weight,
+            dot_product_weight=dot_product_weight,
+            entailment_cone_weight=entailment_cone_weight,
             c=self.c,
             remove=self.remove,
             ema=self.ema)
@@ -78,7 +86,7 @@ class ResidualVectorQuantizer(nn.Module):
                 x: torch.Tensor,
                 sample_rate: int,
                 bandwidth: tp.Optional[float]=None,
-                nq = 0) -> QuantizedResult:
+                nq = 0, validation=False) -> QuantizedResult:
         """Residual vector quantization on the given input tensor.
         Args:
             x (torch.Tensor): Input tensor.
@@ -94,10 +102,15 @@ class ResidualVectorQuantizer(nn.Module):
             n_q = self.get_num_quantizers_for_bandwidth(sample_rate, bandwidth)
         else:
             n_q = nq
-        quantized, codes, commit_loss = self.vq(x, n_q=n_q)
-        bw = torch.tensor(n_q * bw_per_q).to(x)
-        return quantized, codes, bw, torch.mean(commit_loss)
-        #return QuantizedResult(quantized, codes, bw, penalty=torch.mean(commit_loss))
+            
+        if validation:
+            quantized, codes, commit_loss, dot_vec = self.vq(x, n_q=n_q, validation=validation)
+            bw = torch.tensor(n_q * bw_per_q).to(x)
+            return quantized, codes, bw, torch.mean(commit_loss), dot_vec
+        else:
+            quantized, codes, commit_loss = self.vq(x, n_q=n_q, validation=validation)
+            bw = torch.tensor(n_q * bw_per_q).to(x)
+            return quantized, codes, bw, torch.mean(commit_loss)
 
     def get_num_quantizers_for_bandwidth(
             self, sample_rate: int, bandwidth: tp.Optional[float]=None) -> int:

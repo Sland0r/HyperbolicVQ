@@ -1,0 +1,228 @@
+\documentclass[12pt]{report}
+
+\usepackage{graphicx, color}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=2cm]{geometry}
+
+
+
+\newcommand{\red}[1]{{\color{red}{#1}}}
+
+
+
+\begin{document}
+
+
+
+
+
+\begin{titlepage}
+
+
+
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % Defines a new command for the horizontal lines, change thickness here
+
+\center % Center everything on the page
+
+ 
+
+%----------------------------------------------------------------------------------------
+
+%	HEADING SECTIONS
+
+%----------------------------------------------------------------------------------------
+
+
+\textsc{\Large MSc Artificial Intelligence}\\[0.2cm]
+
+\textsc{\Large Master Thesis}\\[0.5cm] 
+
+
+
+%----------------------------------------------------------------------------------------
+
+%	TITLE SECTION
+
+%----------------------------------------------------------------------------------------
+
+
+
+\HRule \\[0.4cm]
+
+{ \huge \bfseries \red{Your Title Here}}\\[0.4cm] % Title of your document
+
+\HRule \\[0.5cm]
+
+ 
+
+%----------------------------------------------------------------------------------------
+
+%	AUTHOR SECTION
+
+%----------------------------------------------------------------------------------------
+
+
+
+by\\[0.2cm]
+
+\textsc{\Large Alessio Colombo}\\[0.2cm] %you name
+
+15387569\\[1cm]
+
+
+
+
+
+%----------------------------------------------------------------------------------------
+
+%	DATE SECTION
+
+%----------------------------------------------------------------------------------------
+
+
+
+{\Large \today}\\[1cm] % Date, change the \today to a set date if you want to be precise
+
+
+
+36 ETCs\\ %
+
+\red{Period in which the research was carried out}\\[1cm]%
+
+
+
+%----------------------------------------------------------------------------------------
+
+%	COMMITTEE SECTION
+
+%----------------------------------------------------------------------------------------
+
+\begin{minipage}[t]{0.4\textwidth}
+
+\begin{flushleft} \large
+
+\emph{Supervisor:} \\
+
+\red{Dr A \textsc{Person} }% Supervisor's Name
+
+\end{flushleft}
+
+\end{minipage}
+
+~
+
+\begin{minipage}[t]{0.4\textwidth}
+
+\begin{flushright} \large
+
+\emph{Examiner:} \\
+
+\red{Dr A  \textsc{Person}}\\
+
+\vspace{0.5cm}
+
+\emph{Second reader:} \\
+
+\red{Dr A  \textsc{Person}}\\
+
+\end{flushright}
+
+\end{minipage}\\[2cm]
+
+
+
+%----------------------------------------------------------------------------------------
+
+%	LOGO SECTION
+
+%----------------------------------------------------------------------------------------
+
+
+
+
+\includegraphics[width=10cm]{uvalogo_regular_p_nl.eps}
+
+ 
+
+%----------------------------------------------------------------------------------------
+
+
+
+\vfill % Fill the rest of the page with whitespace
+
+\end{titlepage}
+
+\pagenumbering{roman}
+
+\tableofcontents
+
+\begin{abstract}
+\red{Provide a short overview and description of your thesis here.}
+\end{abstract}
+
+\pagenumbering{arabic}
+
+\chapter{Introduction}
+The synthesis and compression of high-fidelity audio remain central challenges in modern generative modeling. Audio signals are intrinsically high-dimensional and exhibit complex temporal dependencies spanning multiple perceptual scales—from microsecond waveform fluctuations to long-range musical form. Since 2021, discrete latent variable models have emerged as a powerful paradigm for addressing these challenges, enabling scalable compression and high-quality generation through learned tokenization. Among these, the Vector Quantized Variational Autoencoder (VQ-VAE) played a foundational role by discretizing continuous latent representations \cite{vqvae}.
+Building upon this foundation, the Residual-Quantized Variational Autoencoder (RQ-VAE)—first successfully applied to broad-domain audio via the SoundStream architecture—has become the cornerstone of universal neural codecs \cite{soundstream}. By employing multi-stage residual vector quantization (RVQ), RQ-VAE architectures achieve exponential representational capacity without requiring prohibitively large codebooks. This design enables favorable rate–distortion trade-offs and serves as the backbone for contemporary music foundation models, including MusicGen \cite{musicgen}, MusicLM \cite{musiclm}, and commercial systems like Suno V5 and Udio 1.5.
+Despite the empirical success of RQ-VAEs in multi-modal and commercial applications, these approaches are grounded in Euclidean latent geometries that impose severe structural limitations. Music is intrinsically hierarchical, organized across multiple nested scales: raw waveforms at the micro-level, motifs and chords at the meso-level, and global narrative sections at the macro-level. Developing a musical theme involves systematic variation—creating branching, tree-like families of related structures.
+In Euclidean space, embedding tree-like data incurs distortion because volume grows only polynomially with radius. This geometric mismatch leads to critical failure modes in standard RQ-VAEs, namely codebook collapse \cite{collapse_1, collapse_2} and "vanishing residuals", where deeper quantization levels contribute marginal structural information. Hyperbolic space, by contrast, exhibits exponential volume growth, providing a natural inductive bias for embedding hierarchical trees with minimal distortion.
+The central thesis of this work is that hyperbolic geometry provides a vastly superior latent manifold for musical representation. By integrating hyperbolic distance metrics and Möbius operations directly into the residual quantization algorithms, we aim to introduce an explicit hierarchical inductive bias. We hypothesize that this geometric shift will improve codebook utilization, mitigate vanishing residual structures, and fundamentally enhance long-term musical coherence in generative models.
+
+\chapter{Related work}
+\subsection{Foundations of End-to-End Neural Audio Codecs}
+
+The transition from classical signal processing pipelines to neural audio codecs has been driven by the exponential growth of online audio data and the demand for efficient streaming. While early neural codecs struggled with the complexity of music, the introduction of SoundStream \cite{soundstream} established a blueprint for universal codecs. By decomposing the quantization process into sequential layers, SoundStream's RVQ mechanism allows the model to capture high-energy global structures in early layers and subtle, fine-grained acoustic textures in deeper layers. SoundStream also introduced "quantizer dropout," enabling variable bitrate coding within a single model.
+
+Subsequent architectures have rapidly advanced this baseline. Meta's EnCodec \cite{encodec} pushed the boundaries to support 48 kHz stereo music by introducing a "loss balancer" to stabilize adversarial training and a multi-scale Short-Time Fourier Transform (STFT) discriminator to preserve phase information across temporal and frequency axes. To better model the periodic structures essential for musical harmonics, the Descript Audio Codec (DAC) \cite{dac} replaced standard activations with the "Snake" activation function, achieving near-transparent 44.1 kHz reconstruction. DAC also fundamentally improved codebook utilization to nearly 100\% by projecting latent features into a low-dimensional space and employing $L_2$-normalized codes.
+
+\subsection{Multi-Scale, Subband, and Stereo Innovations}
+Standard RVQ stages typically operate at a uniform temporal resolution, which misaligns with the varying timescales of audio features. The Multi-Scale Neural Audio Codec (SNAC) \cite{snac} resolved this by introducing coarse-to-fine temporal hierarchies, sampling early semantic tokens at low frequencies (e.g., 12 Hz) and fine acoustic tokens at higher frequencies (up to 47 Hz). 
+In the frequency domain, MBCodec \cite{mbcodec} introduced Pseudo-Quadrature Mirror Filters (PQMF) to decompose audio into subbands, exclusively supervising distinct RVQ codebooks to prevent inter-band interference. For stereo spatialization, SpectroStream \cite{spectrostream} modeled audio in the time-frequency domain using a "delayed-fusion" strategy, preserving cross-channel phase consistency essential for natural stereo imaging.
+
+%\subsection{Semantic Decoupling and Edge Deployment}
+%As codecs increasingly serve as front-ends for Language Models, there has been a push toward "semantic codecs" like Mimi and SpeechTokenizer. These models use self-supervised learning (SSL) distillation (e.g., WavLM) to force the first RVQ layer to capture invariant semantic content, leaving subsequent layers to model acoustic style. Mimi also achieved a breakthrough by replacing convolutional bottlenecks with Transformers, reducing the frame rate to 12.5 Hz to dramatically improve inference speed for Large Language Models.
+%Simultaneously, for mobile deployment, models like FunCodec and LDCodec have drastically reduced computational overhead. LDCodec introduced Long-term and Short-term RVQ (LSRVQ), quantizing features across multiple frames to remove temporal redundancies and cut data transmission sizes by 31\%.
+
+\subsection{Emerging Quantization Paradigms}
+Despite the dominance of RVQ, emerging architectures challenge the paradigm. Finite Scalar Quantization (FSQ) \cite{finitescalarquantizationfsq} projects the latent space onto scalar channels quantized into fixed levels, eliminating learned codebooks to naturally prevent codebook collapse. Alternatively, Continuous Audio Language Models (CALM) \cite{calmcontinuousaudiolanguagemodels} reject discretization entirely, operating directly on the continuous latent space of a VAE using a Consistency Model head to achieve faster inference speeds.
+
+\subsection{The Persistent Superiority of RQ-VAE for Multi-Modality}
+Given the rise of FSQ and CALM, one must justify the continued use of RQ-VAEs. The persistence of discrete residual tokens is fundamentally driven by the multi-modal imperative. The hierarchical structure of RQ-VAE perfectly suits cross-modal semantic mapping. Frameworks like Amazon's 3MToken (Multimodal Music Tokenizer) \cite{3mtoken} leverage this to compress artist descriptions, text prompts, and audio characteristics into a single sequence. Furthermore, the shift toward Generative Audio Compression (GAC) \cite{gac} relies heavily on low-rate semantic tokens. Foundation models like MusicLM leverage SoundStream tokens alongside semantic w2v-BERT \cite{w2vbert} tokens for long-term musical coherence.
+
+\subsection{Euclidean Bottleneck and Hyperbolic Deep Learning}
+While RQ-VAEs are functionally necessary for multi-modal generation, their reliance on Euclidean geometry severely limits their potential. Euclidean RQ-VAEs suffer from Codebook Collapse \cite{collapse_1, collapse_2} and the "Vanishing Residuals" phenomenon, in which residuals in deeper stages shrink, lose their structural connection to coarse-grained approximations, and degrade into random noise.
+Hyperbolic deep learning extends neural architectures to Riemannian manifolds (such as the Poincaré ball or Lorentz model) with constant negative curvature. In these spaces, distance grows exponentially as points approach the boundary, providing "infinite" resolution for representing the nuanced leaf nodes of a musical hierarchy without cluttering the global abstractions near the center. While prior work has shown that transitioning to Hyperbolic Vector Quantization significantly mitigates codebook collapse and preserves topology \cite{hrqvae, hypervq}, these implementations largely map Euclidean algorithms onto hyperbolic spaces. This proposal advances the field by investigating ways to integrate the hierarchical bias directly into the RQ-VAE training algorithms via Möbius operations and manifold-aware Riemannian optimization.
+
+\subsection{Research question and next steps}
+Research question: How to integrate hyperbolic deep learning in residual vector quantization, and how to change euclidean algorithms to force the inductive bias? (implementation + stabilization) \\
+Subquestions: a) What is the new codebook utilization? What is the information at different depths? \\
+b)if it works, how to scale up to more recent models? \\
+c) is it possible to adapt hyperbolic deep learning to other vector quantization paradigms? \\
+Problems: it might not work, worst case it becomes a plain adaptation of SoundStream in hyperbolic space.
+\subsection{Plan}
+March: Implementation of Euclidean and Hyperbolic SoundStream. \\
+April/May: Running experiments looking for training settings that improve performance (reconstruction, perplexity, compression in bits per second). \\
+end of May/June: Write paper and report findings.
+
+\chapter{Methods}
+
+
+
+\chapter{Experiments}
+
+
+
+\chapter{Conclusions}
+
+
+\appendix
+\chapter{Optional appendix}
+
+\bibliographystyle{plain}
+\bibliography{bibentries}
+
+\end{document}
+
+

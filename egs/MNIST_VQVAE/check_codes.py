@@ -17,6 +17,7 @@ def get_args():
     parser.add_argument("--output", type=str, default="", help="Output image file path")
     parser.add_argument("--plot_images", action="store_true", help="Plot decoded images instead of scatter points")
     parser.add_argument("--image_zoom", type=float, default=0.5, help="Zoom factor for plotted images")
+    parser.add_argument("--val_scatter", action="store_true", help="Plot validation points and first codebook images")
     return parser.parse_args()
 
 
@@ -40,9 +41,7 @@ def main():
     checkpoint_dir = os.path.dirname(args.checkpoint)
     
     # Try to infer config values
-    #c = args.c
     dataset = "mnist"
-    #if c is None:
     try:
         sys.path.insert(0, checkpoint_dir)
         import config
@@ -76,7 +75,7 @@ def main():
         raise ValueError(f"No codebooks found in checkpoint.")
 
     if c > 0:
-        from academicodec.quantization.core_vq import mobius_add
+        from academicodec.quantization.core_vq import mobius_add, project, exp_map0
 
     dim = codebooks[0].shape[-1]
     
@@ -122,6 +121,7 @@ def main():
             for cb_pt in cb:
                 if c > 0:
                     new_pt = mobius_add(curr_pt.unsqueeze(0), cb_pt.unsqueeze(0), c).squeeze(0)
+                    new_pt = project(new_pt.unsqueeze(0), c).squeeze(0)
                 else:
                     new_pt = curr_pt + cb_pt
                     
@@ -141,11 +141,11 @@ def main():
         
         if args.plot_images:
             # Decode each point and plot image
-            # The Decoder expects input (1, D, N) where N=16
+            # The Decoder expects input (1, D, 1)
             with torch.no_grad():
                 for pt, pt_np in zip(new_points, new_points_np):
-                    # Replicate point to spatial grid
-                    z_map = pt.unsqueeze(0).unsqueeze(2).repeat(1, 1, 16)  # (1, D, 16)
+                    # No need to repeat spatially since N=1
+                    z_map = pt.unsqueeze(0).unsqueeze(2)  # (1, D, 1)
                     decoded_img = decoder(z_map).squeeze(0)  # (C, H, W)
                     decoded_img_np = decoded_img.numpy()
                     
@@ -194,8 +194,119 @@ def main():
         output_path = os.path.join(checkpoint_dir, f"{checkpoint_name}_hierarchy{suffix}.png")
         
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
     print(f"Plot saved to: {output_path}")
+
+    if args.val_scatter:
+        print("Generating validation scatter plot...")
+        from torchvision import datasets, transforms
+        from torch.utils.data import DataLoader
+        transform = transforms.ToTensor()
+        
+        # Determine dataset dir
+        base = '/home/acolombo/VAEs/dataset'
+        ds_map = {'mnist': 'MNIST', 'cifar100': 'CIFAR100', 'emnist': 'EMNIST'}
+        data_dir = os.path.join(base, ds_map.get(dataset, 'MNIST'))
+        
+        if dataset == "mnist":
+            val_data = datasets.MNIST(root=data_dir, train=False, download=True, transform=transform)
+        elif dataset == "emnist":
+            val_data = datasets.EMNIST(root=data_dir, split="byclass", train=False, download=True, transform=transform)
+        elif dataset == "cifar100":
+            val_data = datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform)
+        else:
+            val_data = datasets.MNIST(root=data_dir, train=False, download=True, transform=transform)
+            
+        val_loader = DataLoader(val_data, batch_size=256, shuffle=False, num_workers=4)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Init encoder
+        sys.path.insert(0, "/home/acolombo/VAEs/egs/MNIST_VQVAE")
+        from mnist_vqvae import Encoder, Decoder
+        in_channels = 3 if dataset == "cifar100" else 1
+        img_size = 32 if dataset == "cifar100" else 28
+        
+        encoder = Encoder(D=dim, in_channels=in_channels, img_size=img_size)
+        encoder_state = {}
+        for k, v in state_dict.items():
+            if k.startswith("encoder."):
+                encoder_state[k.replace("encoder.", "")] = v
+        encoder.load_state_dict(encoder_state)
+        encoder.to(device)
+        encoder.eval()
+        
+        # also need decoder if not init
+        dec = decoder
+        if dec is None:
+            dec = Decoder(D=dim, out_channels=in_channels, img_size=img_size)
+            decoder_state = {}
+            for k, v in state_dict.items():
+                if k.startswith("decoder."):
+                    decoder_state[k.replace("decoder.", "")] = v
+            dec.load_state_dict(decoder_state)
+        
+        dec.to(device)
+        dec.eval()
+        
+        print("Extracting encoded validation points...")
+        all_z = []
+        all_labels = []
+        with torch.no_grad():
+            for imgs, labels in val_loader:
+                imgs = imgs.to(device)
+                z = encoder(imgs) # (B, D, 1)
+                z = z.squeeze(-1) # (B, D)
+                if c > 0:
+                    # Encoder output is in tangent space; map to the ball before plotting.
+                    z = project(exp_map0(z, c), c)
+                all_z.append(z.cpu())
+                all_labels.append(labels.cpu())
+                
+        all_z = torch.cat(all_z, dim=0).numpy()
+        all_labels = torch.cat(all_labels, dim=0).numpy()
+        
+        fig2, ax2 = plt.subplots(figsize=(12, 12))
+        
+        # Scatter val points
+        cmap_name = 'tab20' if dataset == 'emnist' else 'tab10'
+        scatter = ax2.scatter(all_z[:, 0], all_z[:, 1], c=all_labels, cmap=cmap_name, s=10, alpha=0.5)
+        legend1 = ax2.legend(*scatter.legend_elements(), title="Classes", loc="upper right")
+        ax2.add_artist(legend1)
+        
+        # Plot origin
+        ax2.scatter([0], [0], c="black", marker="x", s=100, label="Origin", zorder=100)
+        
+        # Plot codebook 0 as images
+        cb0 = codebooks[0].numpy()
+        dec.cpu()
+        with torch.no_grad():
+            for pt in cb0:
+                pt_tensor = torch.from_numpy(pt).unsqueeze(0).unsqueeze(2) # (1, D, 1)
+                decoded_img = dec(pt_tensor).squeeze(0)
+                decoded_img_np = decoded_img.numpy()
+                plot_image_at_point(ax2, pt[:2], decoded_img_np, args.image_zoom, zorder=20)
+                
+        if c > 0:
+            radius = 1.0 / np.sqrt(c)
+            circle = plt.Circle((0, 0), radius, color="green", fill=False, linestyle="-", linewidth=2, label="Poincaré boundary")
+            ax2.add_patch(circle)
+            bound = radius * 1.1
+            ax2.set_xlim(-bound, bound)
+            ax2.set_ylim(-bound, bound)
+        else:
+            bound = float(np.max(np.abs(all_z[:, :2]))) * 1.1 if all_z.size > 0 else 0.5
+            ax2.set_xlim(-bound, bound)
+            ax2.set_ylim(-bound, bound)
+            
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xlabel("Dim 1")
+        ax2.set_ylabel("Dim 2")
+        plt.title("Validation Set Encodings and First Codebook Images")
+        
+        val_output_path = os.path.join(checkpoint_dir, f"{os.path.basename(args.checkpoint).split('.')[0]}_val_scatter.png")
+        plt.savefig(val_output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"Validation scatter plot saved to: {val_output_path}")
+
 
 if __name__ == "__main__":
     main()

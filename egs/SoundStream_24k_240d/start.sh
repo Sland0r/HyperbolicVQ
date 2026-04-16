@@ -2,11 +2,11 @@
 
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --job-name=h1_bw_u_aug_2
+#SBATCH --job-name=h1_bw_u_cm5cb5
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=05:30:00
-#SBATCH --output=logs/h1_bw_u_aug_2_%A.out
+#SBATCH --output=logs/h1_bw_u_cm5cb5_%A.out
 
 module purge
 module load 2025
@@ -14,7 +14,7 @@ module load Anaconda3/2025.06-1
 source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
-NAME="h1_bw_u_aug_2"
+NAME="h1_bw_u_cm5cb5"
 
 # POINCARE
 C=1.0
@@ -41,6 +41,10 @@ LAMBDA_FEAT=1
 LAMBDA_ADV=1
 LAMBDA_RECON=1
 
+# CODEBOOK
+CODEBOOK_WEIGHT=0.5 # codes towards encoder output
+COMMITMENT_WEIGHT=0.5 # encoder outputs towards codes
+
 
 python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --BATCH_SIZE ${BATCH_SIZE} \
@@ -60,6 +64,8 @@ python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --ratios ${RATIOS} \
         --target_bandwidths ${TARGET_BANDWIDTHS} \
         --exponential_lambda ${EXPONENTIAL_LAMBDA} \
+        --codebook_weight ${CODEBOOK_WEIGHT} \
+        --commitment_weight ${COMMITMENT_WEIGHT} \
         --print_freq ${PRINT_FREQ} \
         --warmup_epochs_g ${WARMUP_EPOCHS_G} \
         #--pre_quant_batchnorm \
