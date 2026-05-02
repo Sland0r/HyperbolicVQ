@@ -41,6 +41,7 @@ class ResidualVectorQuantizer(nn.Module):
     def __init__(
             self,
             dimension: int=256,
+            codebook_dim: tp.Optional[int]=None,
             n_q: int=8,
             bins: int=1024,
             decay: float=0.99,
@@ -58,6 +59,7 @@ class ResidualVectorQuantizer(nn.Module):
         super().__init__()
         self.n_q = n_q
         self.dimension = dimension
+        self.codebook_dim = codebook_dim
         self.bins = bins
         self.decay = decay
         self.kmeans_init = kmeans_init
@@ -68,6 +70,7 @@ class ResidualVectorQuantizer(nn.Module):
         self.ema = ema
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
+            codebook_dim=self.codebook_dim,
             codebook_size=self.bins,
             num_quantizers=self.n_q,
             decay=self.decay,

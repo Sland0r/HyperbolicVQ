@@ -357,15 +357,9 @@ def main():
             t_fw_end = time.time()
             total_fw_time += (t_fw_end - t_fw_start)
 
-            t_bw_start = time.time()
-            optimizer.zero_grad()
-            loss.backward()
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
             # ── Codebook separation loss ──────────────────────────
             sep_loss_val = 0.0
-            if args.LAMBDA_SEP > 0:
+            if args.LAMBDA_SEP > 0 and not args.ema:
                 sep_loss = torch.tensor(0.0, device=device)
                 n_q_active = len(model.quantizer.vq.layers)
                 for qi in range(n_q_active):
@@ -379,11 +373,15 @@ def main():
                     # minimize negative sum -> maximise total pairwise distance
                     sep_loss = sep_loss - dist_matrix.sum()
                 sep_loss = args.LAMBDA_SEP * sep_loss
-                optimizer.zero_grad()
-                sep_loss.backward()
-                optimizer.step()
                 sep_loss_val = sep_loss.item()
+                loss = loss + sep_loss
             train_sep_sum += sep_loss_val
+
+            t_bw_start = time.time()
+            optimizer.zero_grad()
+            loss.backward()
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
 
             t_bw_end = time.time()
             total_bw_time += (t_bw_end - t_bw_start)

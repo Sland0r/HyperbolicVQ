@@ -2,11 +2,11 @@
 
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --job-name=h1_bw_u_cm5cb5
+#SBATCH --job-name=fuck_the_shapes
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=05:30:00
-#SBATCH --output=logs/h1_bw_u_cm5cb5_%A.out
+#SBATCH --output=logs/fuck_the_shapes_%A.out
 
 module purge
 module load 2025
@@ -14,7 +14,7 @@ module load Anaconda3/2025.06-1
 source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
-NAME="h1_bw_u_cm5cb5"
+NAME="fuck_the_shapes"
 
 # POINCARE
 C=1.0
@@ -36,14 +36,20 @@ SR=24000
 # LEARNING RATES AND LOSSES
 LR_G=3e-4
 LR_MANIFOLD=1e-3
-LAMBDA_COM=1
-LAMBDA_FEAT=1
-LAMBDA_ADV=1
-LAMBDA_RECON=1
+LAMBDA_COM=0.1        # complete latent loss
+LAMBDA_FEAT=1           # feature loss
+LAMBDA_ADV=1            # adversarial loss
+LAMBDA_RECON=1          # reconstruction loss
+LAMBDA_SEP=0            # separation loss
 
 # CODEBOOK
-CODEBOOK_WEIGHT=0.5 # codes towards encoder output
-COMMITMENT_WEIGHT=0.5 # encoder outputs towards codes
+THRESHOLD_EMA_DEAD_CODE=2
+CODEBOOK_WEIGHT=1.0     # codes towards encoder output
+COMMITMENT_WEIGHT=0.25  # encoder outputs towards codes
+DOT_PRODUCT_WEIGHT=0.0
+ENTAILMENT_CONE_WEIGHT=0.0
+CODEBOOK_DIM=512        # 512
+DECAY=0.999
 
 
 python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
@@ -62,16 +68,24 @@ python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --lr_g ${LR_G} \
         --lr_manifold ${LR_MANIFOLD} \
         --ratios ${RATIOS} \
+        --decay ${DECAY} \
         --target_bandwidths ${TARGET_BANDWIDTHS} \
         --exponential_lambda ${EXPONENTIAL_LAMBDA} \
         --codebook_weight ${CODEBOOK_WEIGHT} \
         --commitment_weight ${COMMITMENT_WEIGHT} \
+        --dot_product_weight ${DOT_PRODUCT_WEIGHT} \
+        --entailment_cone_weight ${ENTAILMENT_CONE_WEIGHT} \
+        --LAMBDA_SEP ${LAMBDA_SEP} \
+        --threshold_ema_dead_code ${THRESHOLD_EMA_DEAD_CODE} \
+        --codebook_dim ${CODEBOOK_DIM} \
         --print_freq ${PRINT_FREQ} \
         --warmup_epochs_g ${WARMUP_EPOCHS_G} \
+        #--uniform \
+        #--constructive \
         #--pre_quant_batchnorm \
         #--use_spec_augment \
         #--ema \
-        #--kmeans_init
+        #--kmeans_init \
 
 # Extract PPLs from the generated log file automatically
 python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/extract_ppls.py logs/${NAME}_${SLURM_JOB_ID}.out

@@ -37,6 +37,12 @@ from einops import rearrange
 from einops import repeat
 from torch import nn
 import geoopt
+from hypll.manifolds.poincare_ball import PoincareBall as HypllPoincareBall
+from hypll.manifolds.poincare_ball import Curvature
+from hypll.nn.modules.linear import HLinear
+from hypll.tensors.manifold_tensor import ManifoldTensor
+
+
 import sys
 sys.path.insert(0, '/home/acolombo/music')
 from hyp_modules import HyperbolicEntailmentConeLoss
@@ -177,6 +183,8 @@ def einstein_midpoint(z, w, c):
 
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
+    if val == 0:
+        return d
     return val if val is not None else d
 
 
@@ -273,6 +281,10 @@ class EuclideanCodebook(nn.Module):
             tp.Callable[..., torch.Tensor],
             tp.Any] = uniform_init if not kmeans_init else torch.zeros
         embed = init_fn(codebook_size, dim)
+
+        # if not kmeans_init:
+        #     # Normalize random init to zero-mean, unit-variance
+        #     embed = (embed - embed.mean()) / embed.std().clamp_min(1e-5)
 
         self.codebook_size = codebook_size
 
@@ -481,12 +493,6 @@ class VectorQuantization(nn.Module):
         
         _codebook_dim: int = default(codebook_dim, dim)
 
-        requires_projection = _codebook_dim != dim
-        self.project_in = (nn.Linear(dim, _codebook_dim)
-                           if requires_projection else nn.Identity())
-        self.project_out = (nn.Linear(_codebook_dim, dim)
-                            if requires_projection else nn.Identity())
-
         self.epsilon = epsilon
         self.commitment_weight = commitment_weight
         self.codebook_weight = codebook_weight
@@ -509,21 +515,24 @@ class VectorQuantization(nn.Module):
 
     def encode(self, x):
         x = rearrange(x, "b d n -> b n d")
-        x = self.project_in(x)
+        # if hasattr(self.project_in, 'manifold'):
+        #     x = self.project_in(ManifoldTensor(x, manifold=self.project_in.manifold)).tensor
+        # else:
+        #     x = self.project_in(x)
         embed_in = self._codebook.encode(x)
         return embed_in
 
     def decode(self, embed_ind):
         quantize = self._codebook.decode(embed_ind)
-        quantize = self.project_out(quantize)
+        # if hasattr(self.project_out, 'manifold'):
+        #     quantize = self.project_out(ManifoldTensor(quantize, manifold=self.project_out.manifold)).tensor
+        # else:
+        #     quantize = self.project_out(quantize)
         quantize = rearrange(quantize, "b n d -> b d n")
         return quantize
 
     def forward(self, x): # quantizes x, computes loss depending on distance to codes, properly propagates gradients
         device = x.device
-        x = rearrange(x, "b d n -> b n d")
-        x = self.project_in(x)
-
         quantize, embed_ind = self._codebook(x)
 
         # Save pre-STE quantize (has gradient path to embed) for codebook loss
@@ -534,7 +543,11 @@ class VectorQuantization(nn.Module):
             #     diff = mobius_sub(quantize, x, self.c)
             #     quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             # else:
-            quantize = x + (quantize - x).detach()
+            if self.c > 0:
+                # Hyperbolic straight-through estimator
+                quantize = exp_map(x, log_map(x, quantize, self.c).detach(), self.c)
+            else:
+                quantize = x + (quantize - x).detach()
 
         loss = torch.tensor([0.0], device=device, requires_grad=self.training)
 
@@ -555,8 +568,11 @@ class VectorQuantization(nn.Module):
                     codebook_loss = F.mse_loss(x.detach(), quantize_raw)
                 loss = loss + codebook_loss * self.codebook_weight
 
-        quantize = self.project_out(quantize)
-        quantize = rearrange(quantize, "b n d -> b d n")
+        # if hasattr(self.project_out, 'manifold'):
+        #     quantize = self.project_out(ManifoldTensor(quantize, manifold=self.project_out.manifold)).tensor
+        # else:
+        #     quantize = self.project_out(quantize)
+        # quantize = rearrange(quantize, "b n d -> b d n")
         return quantize, embed_ind, loss
 
 
@@ -575,51 +591,76 @@ class ResidualVectorQuantization(nn.Module):
         self.layers = nn.ModuleList(
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)])
         self.remove = kwargs.get("remove", 0)
+        dim = kwargs.get("dim", 256)
+        codebook_dim = kwargs.get("codebook_dim", dim)
+        _codebook_dim: int = default(codebook_dim, dim)
+
+        self.requires_projection = _codebook_dim != dim
+        if self.requires_projection and self.c > 0:
+            hyp_manifold = HypllPoincareBall(c=Curvature(self.c))
+            self.project_in = HLinear(dim, _codebook_dim, manifold=hyp_manifold, bias=True)
+            self.project_out = HLinear(_codebook_dim, dim, manifold=hyp_manifold, bias=True)
+        elif self.requires_projection:
+            self.project_in = nn.Linear(dim, _codebook_dim)
+            self.project_out = nn.Linear(_codebook_dim, dim)
+        else:
+            self.project_in = nn.Identity()
+            self.project_out = nn.Identity()
 
     def forward(self, x, n_q: tp.Optional[int]=None, validation=False):
+        x = rearrange(x, "b d n -> b n d")
         if self.c > 0:
             residual = project(exp_map0(x, self.c), self.c)
+            if self.requires_projection:
+                residual = self.project_in(ManifoldTensor(residual, manifold=self.project_in.manifold)).tensor
         else:
             residual = x
+            residual = self.project_in(residual)
 
         quantized_out = torch.zeros_like(residual)
         all_losses = []
         all_indices = []
         all_dots = []
+        all_quantized = []
 
-        n_q = len(self.layers)
+        #n_q = len(self.layers)
         n_q = n_q - self.remove
 
         for layer in self.layers[:n_q]:
             quantized, indices, loss = layer(residual)
                 
             if self.c > 0:
-                residual = project(mobius_sub(residual, quantized, self.c), self.c)
+                residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                #residual = project(mobius_sub(residual, quantized, self.c), self.c)
                 q_log = log_map0(quantized, self.c).detach()
                 r_log = log_map0(residual, self.c)
-                dot_p_vec = ((q_log * r_log).sum(dim=1) / q_log.norm(dim=1).clamp_min(1e-5))
-                quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
+                dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
+                all_quantized.append(quantized)
+                #quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
+                
             else:
                 residual = residual - quantized
-                dot_p_vec = (quantized.detach() * residual).sum(dim=1) / quantized.norm(dim=1).clamp_min(1e-5).detach()
+                dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
                 quantized_out = quantized_out + quantized
                 
+            # Used for logging
             dot_p_scalar = dot_p_vec.mean()
             
             if validation:
                 all_dots.append(dot_p_vec.flatten())
 
-            # Negative Dot Product -> Expansion  
-            if dot_p_scalar < 0:
-                loss = loss - self.dot_product_weight * dot_p_scalar # dot_p is negative, so we subtract it to make the loss bigger
+            # Negative Dot Product -> Expansion (penalize negative dot products per-element)
+            if self.dot_product_weight > 0:
+                # ReLU(-x) is positive when x is negative, so it penalizes negative dot products
+                loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
 
             # Entailment Cone Loss: push residual into the cone of quantized
             if self.entailment_cone_weight > 0 and self.c > 0:
                 # quantized.detach() is parent (u), residual is child (v)
                 # Gradients only flow through the residual
-                # Reshape from (B, D, N) to (B*N, D) for the cone loss
-                q_flat = rearrange(quantized.detach(), "b d n -> (b n) d")
-                r_flat = rearrange(residual, "b d n -> (b n) d")
+                # Reshape from (B, N, D) to (B*N, D) for the cone loss
+                q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
+                r_flat = rearrange(residual, "b n d -> (b n) d")
                 cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
                 loss = loss + self.entailment_cone_weight * cone_loss
 
@@ -627,9 +668,19 @@ class ResidualVectorQuantization(nn.Module):
             all_losses.append(loss)
 
         if self.c > 0:
+            for q in reversed(all_quantized):
+                quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
+            if self.requires_projection:
+                quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
+            else:
+                quantized_out = self.project_out(quantized_out)
             quantized_out = log_map0(quantized_out, self.c)
+        else:
+            quantized_out = self.project_out(quantized_out)
 
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
+        
+        quantized_out = rearrange(quantized_out, "b n d -> b d n")
         if validation:
             return quantized_out, out_indices, out_losses, torch.stack(all_dots)
         return quantized_out, out_indices, out_losses

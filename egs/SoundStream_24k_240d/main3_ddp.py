@@ -1,5 +1,6 @@
 # 与 Encodec_24k_240d main3_ddp.py 相比只有鉴别器不同
 import argparse
+import math as _math
 import glob
 import itertools
 import os
@@ -36,13 +37,15 @@ def getModelSize(model):
     param_size = 0
     param_sum = 0
     for param in model.parameters():
-        param_size += param.nelement() * param.element_size()
-        param_sum += param.nelement()
+        p = param.tensor if hasattr(param, 'tensor') else param
+        param_size += p.nelement() * p.element_size()
+        param_sum += p.nelement()
     buffer_size = 0
     buffer_sum = 0
     for buffer in model.buffers():
-        buffer_size += buffer.nelement() * buffer.element_size()
-        buffer_sum += buffer.nelement()
+        b = buffer.tensor if hasattr(buffer, 'tensor') else buffer
+        buffer_size += b.nelement() * b.element_size()
+        buffer_sum += b.nelement()
     all_size = (param_size + buffer_size) / 1024 / 1024
     print('模型总大小为：{:.3f}MB'.format(all_size))
     return (param_size, param_sum, buffer_size, buffer_sum, all_size)
@@ -167,6 +170,11 @@ def get_args():
         default=[1, 1.5, 2, 4, 6, 12],
         help='target_bandwidths of net3.py')
     parser.add_argument(
+        '--decay',
+        type=float,
+        default=0.99,
+        help='decay rate for EMA (default: 0.99)')
+    parser.add_argument(
         '--exponential_lambda',
         type=float,
         default=0.4,
@@ -247,6 +255,41 @@ def get_args():
         '--use_spec_augment',
         action='store_true',
         help='apply SpecAugment data augmentation (default: False)')
+    parser.add_argument(
+        '--dot_product_weight',
+        type=float,
+        default=0.0,
+        help='dot_product_weight for codebook (default: 0.0)')
+    parser.add_argument(
+        '--entailment_cone_weight',
+        type=float,
+        default=0.0,
+        help='entailment_cone_weight for codebook (default: 0.0)')
+    parser.add_argument(
+        '--LAMBDA_SEP',
+        type=float,
+        default=0.0,
+        help='hyper-parameter for codebook separation loss (0 = disabled)')
+    parser.add_argument(
+        '--uniform',
+        action='store_true',
+        help='uniform codebook dropout')
+    parser.add_argument(
+        '--constructive',
+        action='store_true',
+        help='initialize codebooks using constructive tree embeddings (depth=1)')
+    parser.add_argument(
+        '--codebook_dim',
+        type=int,
+        default=512,
+        help='codebook dimension (default: None, same as bottleneck D=512). '
+             'If lower than D, a linear projection is added. '
+             'When c>0, a hyperbolic (HypLinear) projection is used.')
+    parser.add_argument(
+        '--threshold_ema_dead_code',
+        type=int,
+        default=2,
+        help='threshold for EMA dead code replacement (default: 2)')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -296,10 +339,16 @@ def main_worker(local_rank, args):
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
     # 240倍下采
+    # if args.constructive:
+    #     args.threshold_ema_dead_code = 0
     soundstream = SoundStream(n_filters=32, D=512, target_bandwidths=args.target_bandwidths, exponential_lambda=args.exponential_lambda,
-                              codebook_weight=args.codebook_weight, commitment_weight=args.commitment_weight, ratios=args.ratios, 
+                              uniform=args.uniform, threshold_ema_dead_code=args.threshold_ema_dead_code,
+                              codebook_weight=args.codebook_weight, commitment_weight=args.commitment_weight,
+                              dot_product_weight=args.dot_product_weight, entailment_cone_weight=args.entailment_cone_weight,
+                              ratios=args.ratios, decay=args.decay,
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
-                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
+                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
+                              codebook_dim=args.codebook_dim)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -308,6 +357,53 @@ def main_worker(local_rank, args):
     getModelSize(msd)
     getModelSize(mpd)
     getModelSize(stft_disc)
+
+    # ── Constructive codebook initialisation ──────────────────────
+    if args.constructive:
+        import sys
+        sys.path.insert(0, '/home/acolombo/music/hyperbolic_tree_embeddings')
+        from tree_embeddings.trees.file_utils import load_hierarchy
+        from tree_embeddings.embeddings.constructive_method import constructively_embed_tree
+
+        _D = 512
+        _bins = soundstream.bins
+        _n_q = soundstream.n_q
+
+        hierarchy = load_hierarchy(dataset="n_h_trees", hierarchy_name=f"{_bins}_1")
+
+        curvature = args.c if args.c > 0 else 1.0
+        embeddings, _, _ = constructively_embed_tree(
+            hierarchy=hierarchy,
+            dataset="n_h_trees",
+            hierarchy_name=f"{_bins}_1",
+            embedding_dim=_D,
+            tau=1.0,
+            nc=1,
+            curvature=curvature,
+            root=0,
+            gen_type="optim",
+            dtype=torch.float32,
+        )
+
+        # Skip root (index 0, at origin); keep the bins children
+        code_points = embeddings[1:].to(dtype=torch.float32)  # (bins, D)
+        assert code_points.shape == (_bins, _D), \
+            f"Expected ({_bins}, {_D}), got {code_points.shape}"
+
+        # Copy same points into every codebook
+        with torch.no_grad():
+            for qi in range(_n_q):
+                cb = soundstream.quantizer.vq.layers[qi]._codebook
+                cb.embed.data.copy_(code_points)
+                cb.embed_avg.data.copy_(code_points)
+                cb.inited.data.copy_(torch.Tensor([True]))
+                cb.cluster_size.data.fill_(args.threshold_ema_dead_code + 1)
+
+        print(
+            f"Constructive init: {code_points.shape} points copied to all "
+            f"{_n_q} codebooks (curvature={curvature}, tau=1.0)"
+        )
+
     if args.distributed:
         soundstream = torch.nn.SyncBatchNorm.convert_sync_batchnorm(soundstream)
         stft_disc = torch.nn.SyncBatchNorm.convert_sync_batchnorm(stft_disc)
@@ -447,6 +543,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
     import matplotlib.pyplot as plt
     from academicodec.visualization import fit_pca, plot_codes, create_gif
     codebook_plots_dir = os.path.join(args.PATH, "codebook_plots")
+    print('Len dataloader ', len(train_loader))
     print('args ', args.global_rank)
     print('All arguments:')
     for k, v in vars(args).items():
@@ -481,6 +578,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         train_rec_loss = 0.0
         train_loss_g = 0.0
         train_commit_loss = 0.0
+        train_sep_sum = 0.0
         grad_norms_g = []
         grad_norms_d = []
         k_iter = 0
@@ -566,6 +664,26 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_feat_loss += feat_loss.item()
                     train_rec_loss += rec_loss.item()
 
+                    # ── Codebook separation loss ──────────────────────────
+                    sep_loss_val = 0.0
+                    if args.LAMBDA_SEP > 0 and not args.ema:
+                        from academicodec.quantization.core_vq import pairwise_hyperbolic_distance_sq
+                        sep_loss = torch.tensor(0.0, device=args.device)
+                        ss_module = soundstream.module if hasattr(soundstream, 'module') else soundstream
+                        n_q_active = len(ss_module.quantizer.vq.layers)
+                        for qi in range(n_q_active):
+                            embed = ss_module.quantizer.vq.layers[qi]._codebook.embed  # (codebook_size, D)
+                            if args.c > 0:
+                                dist_matrix = pairwise_hyperbolic_distance_sq(embed, embed, args.c)
+                            else:
+                                diff = embed.unsqueeze(0) - embed.unsqueeze(1)  # (K, K, D)
+                                dist_matrix = diff.pow(2).sum(-1)               # (K, K)
+                            sep_loss = sep_loss - dist_matrix.sum()
+                        sep_loss = args.LAMBDA_SEP * sep_loss
+                        sep_loss_val = sep_loss.item()
+                        total_loss_g = total_loss_g + sep_loss
+                    train_sep_sum += sep_loss_val
+
                     # Debug check: catch non-finite quantizer/codebook params before this update.
                     # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/pre_backward")
                     optimizer_g.zero_grad()
@@ -609,13 +727,13 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             #     rec_loss=f'{rec_loss.item():.4f}',
             #     rec_avg=f'{train_rec_loss / k_iter:.4f}',
             #     lr_g=f"{optimizer_g.param_groups[0]['lr']:.2e}")
-            message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}>'.format(
+            message = '<epoch:{:d}, iter:{:d}, total_loss_g:{:.4f}, adv_g_loss:{:.4f}, feat_loss:{:.4f}, rec_loss:{:.4f}, commit_loss:{:.4f}, loss_d:{:.4f}, d_weight: {:.4f}, sep_loss:{:.6f}>'.format(
                 epoch, k_iter,
                 total_loss_g.item(),
                 adv_g_loss.item(),
                 feat_loss.item(),
                 rec_loss.item(),
-                commit_loss.item(), loss_d.item(), d_weight.item())
+                commit_loss.item(), loss_d.item(), d_weight.item(), sep_loss_val)
             if k_iter % args.print_freq == 0:
                 logger.log_info(message)
         lr_scheduler_g.step()
@@ -647,11 +765,12 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
                 train_ppl_last10 = torch.exp2(entropy).tolist()
 
-        message = '<epoch:{:d}, <total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, adversarial_loss_train:{:.4f}, feature_loss_train:{:.4f}, commit_loss_train:{:.4f}>'.format(
+        avg_train_sep = train_sep_sum / len(train_loader)
+        message = '<epoch:{:d}, <total_loss_g_train:{:.4f}, recon_loss_train:{:.4f}, adversarial_loss_train:{:.4f}, feature_loss_train:{:.4f}, commit_loss_train:{:.4f}, sep_loss_train:{:.6f}>'.format(
             epoch, avg_train_g, avg_train_rec,
             train_adv_g_loss / len(train_loader),
             train_feat_loss / len(train_loader),
-            avg_train_com)
+            avg_train_com, avg_train_sep)
         logger.log_info(message)
         train_ppl_str = ", ".join([f"{p:.1f}" for p in train_ppl_whole]) if train_ppl_whole else "N/A"
         train_ppl_last10_str = ", ".join([f"{p:.1f}" for p in train_ppl_last10]) if train_ppl_last10 else "N/A"

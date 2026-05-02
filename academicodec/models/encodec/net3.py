@@ -15,6 +15,7 @@ class SoundStream(nn.Module):
                  D,
                  target_bandwidths=[7.5, 15],
                  exponential_lambda=0.4,
+                 uniform: bool=False,
                  ratios=[8, 5, 4, 2],
                  sample_rate=24000,
                  bins=1024,
@@ -22,11 +23,15 @@ class SoundStream(nn.Module):
                  threshold_ema_dead_code=2,
                  codebook_weight: float=1.0,
                  commitment_weight: float=0.25,
+                 dot_product_weight: float=0.0,
+                 entailment_cone_weight: float=0.0,
                  c: float=0.0,
                  ema: bool=True,
+                 decay: float=0.99,
                  kmeans_init: bool=True,
                  pre_quant_batchnorm: bool=False,
-                 remove: int=0):
+                 remove: int=0,
+                 codebook_dim: int=None):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -37,11 +42,15 @@ class SoundStream(nn.Module):
         self.bits_per_codebook = int(math.log2(bins))
         self.target_bandwidths = target_bandwidths
         self.exponential_lambda = exponential_lambda
+        self.uniform = uniform
+        self.n_q = n_q
+        self.bins = bins
         self.threshold_ema_dead_code = threshold_ema_dead_code
         self.quantizer = ResidualVectorQuantizer(
-            dimension=D, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, 
-            codebook_weight=codebook_weight, commitment_weight=commitment_weight, c=c,
-            ema=ema, kmeans_init=kmeans_init, remove=remove)
+            dimension=D, codebook_dim=codebook_dim, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, 
+            codebook_weight=codebook_weight, commitment_weight=commitment_weight,
+            dot_product_weight=dot_product_weight, entailment_cone_weight=entailment_cone_weight,
+            c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(
@@ -57,8 +66,10 @@ class SoundStream(nn.Module):
         if self.exponential_lambda > 0.0:
             idx = min(max_idx, int(random.expovariate(self.exponential_lambda)))
             bw = self.target_bandwidths[idx]
+        elif self.uniform:
+            bw = self.target_bandwidths[random.randint(0, max_idx)]
         else:
-            bw = self.target_bandwidths[random.randint(0, max_idx)] 
+            bw = self.target_bandwidths[-1]
             
         if validation:
             quantized, codes, bandwidth, commit_loss, dot_vec = self.quantizer(

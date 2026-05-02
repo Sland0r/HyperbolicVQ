@@ -50,7 +50,7 @@
 
 \HRule \\[0.4cm]
 
-{ \huge \bfseries \red{Your Title Here}}\\[0.4cm] % Title of your document
+{ \huge \bfseries Hyperbolic Residual-Quantized Variational Autoencoders}\\[0.4cm] % Title of your document
 
 \HRule \\[0.5cm]
 
@@ -88,7 +88,7 @@ by\\[0.2cm]
 
 36 ETCs\\ %
 
-\red{Period in which the research was carried out}\\[1cm]%
+January 6th 2026 to June xth 2026 \\[1cm]%
 
 
 
@@ -104,7 +104,7 @@ by\\[0.2cm]
 
 \emph{Supervisor:} \\
 
-\red{Dr A \textsc{Person} }% Supervisor's Name
+Melika Ayoughi% Supervisor's Name
 
 \end{flushleft}
 
@@ -163,12 +163,26 @@ by\\[0.2cm]
 
 \pagenumbering{arabic}
 
-\chapter{Introduction}
-The synthesis and compression of high-fidelity audio remain central challenges in modern generative modeling. Audio signals are intrinsically high-dimensional and exhibit complex temporal dependencies spanning multiple perceptual scales—from microsecond waveform fluctuations to long-range musical form. Since 2021, discrete latent variable models have emerged as a powerful paradigm for addressing these challenges, enabling scalable compression and high-quality generation through learned tokenization. Among these, the Vector Quantized Variational Autoencoder (VQ-VAE) played a foundational role by discretizing continuous latent representations \cite{vqvae}.
-Building upon this foundation, the Residual-Quantized Variational Autoencoder (RQ-VAE)—first successfully applied to broad-domain audio via the SoundStream architecture—has become the cornerstone of universal neural codecs \cite{soundstream}. By employing multi-stage residual vector quantization (RVQ), RQ-VAE architectures achieve exponential representational capacity without requiring prohibitively large codebooks. This design enables favorable rate–distortion trade-offs and serves as the backbone for contemporary music foundation models, including MusicGen \cite{musicgen}, MusicLM \cite{musiclm}, and commercial systems like Suno V5 and Udio 1.5.
-Despite the empirical success of RQ-VAEs in multi-modal and commercial applications, these approaches are grounded in Euclidean latent geometries that impose severe structural limitations. Music is intrinsically hierarchical, organized across multiple nested scales: raw waveforms at the micro-level, motifs and chords at the meso-level, and global narrative sections at the macro-level. Developing a musical theme involves systematic variation—creating branching, tree-like families of related structures.
-In Euclidean space, embedding tree-like data incurs distortion because volume grows only polynomially with radius. This geometric mismatch leads to critical failure modes in standard RQ-VAEs, namely codebook collapse \cite{collapse_1, collapse_2} and "vanishing residuals", where deeper quantization levels contribute marginal structural information. Hyperbolic space, by contrast, exhibits exponential volume growth, providing a natural inductive bias for embedding hierarchical trees with minimal distortion.
-The central thesis of this work is that hyperbolic geometry provides a vastly superior latent manifold for musical representation. By integrating hyperbolic distance metrics and Möbius operations directly into the residual quantization algorithms, we aim to introduce an explicit hierarchical inductive bias. We hypothesize that this geometric shift will improve codebook utilization, mitigate vanishing residual structures, and fundamentally enhance long-term musical coherence in generative models.
+\chapter{Introduction} 
+In recent years, representation learning has increasingly shifted toward the discretization of diverse data modalities into token sequences, which underlies the scalability of modern multimodal models. By converting continuous, high-dimensional signals (such as images, audio, and video) into sequences of discrete tokens, this approach enables the effective application of powerful generative architectures, including autoregressive transformers and diffusion models.
+A prominent framework for discretizing continuous data is provided by autoencoders based on Vector Quantization \cite{originalvq, vqvae, finitescalarquantizationfsq, gumbelvq, vqnew}, along with their hierarchical extension, Residual Quantized VAEs (RQ-VAEs) \cite{soundstream}. In particular, RQ-VAEs support the coarse-to-fine decomposition of data by constructing hierarchical representations through successive stages of quantization, thereby capturing structures at multiple levels of granularity.
+
+Despite their empirical success, conventional quantization methods have fundamental structural limitations. These methods are also prone to well-known optimization issues, including codebook collapse, vanishing residual contributions, codebook collisions, and scaling instabilities \cite{collapse_1}.
+Another fundamental geometric limitation of these approaches is their reliance on Euclidean latent spaces. Euclidean geometry is intrinsically flat, with volume growing only polynomially as a function of the radius, making it poorly suited for representing hierarchical data. This mismatch becomes particularly pronounced in the context of RQ-VAEs, which naturally induce tree-like structures: early quantization stages capture coarse information, while subsequent stages progressively refine it. Such hierarchical organizations are more faithfully represented in hyperbolic space, where constant negative curvature induces exponential volume growth. This geometric property closely mirrors the expansion behavior of trees, providing a more appropriate inductive bias for hierarchical representation learning.
+Formally, in the Poincar'e ball model, the distance between two points $\mathbf{u}$ and $\mathbf{v}$ is given by
+\begin{equation}
+    d_{\mathbb{D}}(\mathbf{u}, \mathbf{v}) = \operatorname{arcosh} \left( 1 + 2 \frac{|\mathbf{u} - \mathbf{v}|^2}{(1 - |\mathbf{u}|^2)(1 - |\mathbf{v}|^2)} \right).
+\end{equation}
+The exponential growth of volume induced by this metric makes hyperbolic space a natural embedding space for the hierarchical representations produced by residual quantization.
+
+Although recent work has explored hyperbolic extensions of VQ-VAEs, a critical methodological gap remains. Existing approaches often directly transplant Euclidean training procedures—such as standard K-means clustering or exponential moving average (EMA) updates—into hyperbolic manifolds. However, such techniques fail to account for the intrinsic geometry of these spaces, including the role of Fr'echet means and the non-Euclidean distance structure defined in models such as the Poincar'e ball and Lorentz manifold. As a result, these methods operate in hyperbolic spaces while retaining fundamentally Euclidean optimization principles.
+
+
+In this study, we introduce a novel framework for \emph{Hyperbolic Residual Quantization}, in which the quantization process is treated as a first-class operation on a hyperbolic manifold. Instead of relying on naive geometric projections, we designed training objectives that explicitly leveraged the curvature of the space during codebook updates.
+
+To show that our changes are generalizable, we evaluated the proposed approach across two domains: image synthesis (for visualizations) and audio modeling (because the results of applying hyperbolic learning to audio are promising). To the best of our knowledge, this is the first application of hyperbolic RQ-VAEs to audio data, where hierarchical structures such as harmonic and temporal patterns are particularly prominent. Furthermore, we provide a detailed analysis of the learned latent representations at inference time, demonstrating that hyperbolic quantization yields improved codebook utilization and a more interpretable hierarchical organization than Euclidean baselines.
+%In Euclidean space, embedding tree-like data incurs distortion because volume grows only polynomially with radius. This geometric mismatch leads to critical failure modes in standard RQ-VAEs, namely codebook collapse \cite{collapse_1, collapse_2} and "vanishing residuals,” where deeper quantization levels contribute marginal structural information. In contrast, hyperbolic space exhibits exponential volume growth, providing a natural inductive bias for embedding hierarchical trees with minimal distortion.
+%The central thesis of this work is that hyperbolic geometry provides a vastly superior latent manifold for musical representation. By integrating hyperbolic distance metrics and Möbius operations directly into residual quantization algorithms, we aim to introduce an explicit hierarchical inductive bias. We hypothesize that this geometric shift will improve codebook utilization, mitigate vanishing residual structures, and fundamentally enhance the long-term musical coherence of generative models.
 
 \chapter{Related work}
 \subsection{Foundations of End-to-End Neural Audio Codecs}
@@ -208,9 +222,89 @@ end of May/June: Write paper and report findings.
 
 \chapter{Methods}
 
+This chapter details the methodology introduced to integrate hyperbolic geometry into the quantization process of Residual Vector Quantized Variational Autoencoders (RQ-VAEs). We begin by providing the background on standard Vector Quantization (VQ) and Residual Vector Quantization (RVQ), followed by a formal description of their extension into the Poincar\'e ball model of hyperbolic geometry. Finally, we describe the newly introduced loss components that explicitly enforce hierarchical inductive biases during training.
 
+\section{Background: VQ-VAE and RQ-VAE}
+The Vector Quantized Variational Autoencoder (VQ-VAE) \cite{vqvae} aims to learn a discrete latent representation of continuous data. Given an input signal $x$, an encoder network maps it to a continuous latent representation $z_e$. A trainable codebook $C = \{c_1, \dots, c_K\} \subset \mathbb{R}^D$ is then used to discretize this continuous vector. The quantization process selects the nearest centroid in the codebook based on the Euclidean distance:
+\begin{equation}
+    q(z_e) = c_k, \quad \text{where } k = \operatorname{argmin}_j \| z_e - c_j \|^2_2
+\end{equation}
+The selected vector $q(z_e)$ is subsequently passed to the decoder to reconstruct the original signal. The model is typically trained using a combination of a reconstruction loss, a codebook loss that pulls the centroids towards the encoder outputs, and a commitment loss that pulls the encoder outputs towards the codebook.
 
-\chapter{Experiments}
+Residual Vector Quantization (RVQ) \cite{soundstream} extends this paradigm by quantizing the latent representations in multiple successive stages, which intrinsically imposes a hierarchical structure on the data. Let $r_0 = z_e$ be the initial latent representation. At each stage $i$, the vector $r_{i-1}$ is quantized to obtain a code $q_i$. The residual for the next stage is computed by subtracting the quantized vector from the current residual:
+\begin{equation}
+    r_i = r_{i-1} - q_i
+\end{equation}
+The final quantized representation is the sum of the selected codes across all stages, $\hat{z} = \sum_i q_i$. The coarse-to-fine nature of RVQ makes it particularly effective for capturing complex, multi-scale structures, such as in audio signals, where global structures are resolved in the initial stages and fine-grained acoustic textures are captured in deeper stages.
+
+\section{Hyperbolic Residual Quantization}
+Despite their success, standard VQ and RVQ operate in Euclidean space, which can lead to vanishing residuals and structural distortions when embedding hierarchical data. To address this, we extend the quantization operations to the Poincar\'e ball manifold $\mathbb{D}_c^D$, where $c > 0$ represents the absolute value of the negative curvature.
+
+\subsection{Hyperbolic Distance and Quantization}
+In Hyperbolic VQ, the Euclidean distance used to match the continuous vector to the codebook centroids is replaced by the squared hyperbolic distance metric. Given a vector $x \in \mathbb{D}_c^D$ and a codebook $C \subset \mathbb{D}_c^D$, the nearest neighbor assignment is computed as:
+\begin{equation}
+    q(x) = c_k, \quad \text{where } k = \operatorname{argmin}_j d_{\mathbb{D}_c}^2(x, c_j)
+\end{equation}
+This formulation ensures that the assignment process strictly follows the geodesics of the hyperbolic manifold.
+
+\subsection{M\"obius Addition and Subtraction for RVQ}
+The straightforward additive and subtractive operations fundamental to Euclidean RVQ are not mathematically valid on a hyperbolic manifold. Instead, these operations are replaced by their corresponding M\"obius operations. 
+Specifically, the Euclidean residual update $r_i = r_{i-1} - q_i$ is replaced by the M\"obius subtraction:
+\begin{equation}
+    r_i = r_{i-1} \ominus_c q_i = r_{i-1} \oplus_c (-q_i)
+\end{equation}
+where $\oplus_c$ denotes the M\"obius addition. This ensures that the newly computed residual $r_i$ remains on the Poincar\'e ball. Similarly, the final quantized representation, which is the sum of individual codes in the Euclidean case, is computed by recursively aggregating the representations using M\"obius addition. Because M\"obius addition is neither commutative nor associative, we rigorously evaluate the sum by chaining the operations in reverse order from the finest to the coarsest quantization level:
+\begin{equation}
+    \hat{z} = q_1 \oplus_c (q_2 \oplus_c \dots (q_{N-1} \oplus_c q_N))
+\end{equation}
+To ensure numerical stability during these operations, all outputs of M\"obius additions are explicitly projected back onto the open Poincar\'e ball using a clipping mechanism subject to a small $\epsilon$.
+
+\subsection{Hyperbolic Straight-Through Estimator}
+In standard Euclidean VQ-VAE, the quantization step is non-differentiable. To allow gradients to flow from the decoder back to the encoder, a Straight-Through Estimator (STE) is typically employed. Mathematically, this is implemented during the forward pass by detaching the difference between the quantized output $q(z_e)$ and the continuous input $z_e$, and adding it back to $z_e$:
+\begin{equation}
+    \hat{z}_{\text{STE}} = z_e + (q(z_e) - z_e)_{\text{detach}}
+\end{equation}
+This evaluates to $q(z_e)$ in the forward pass, but allows the gradient of the continuous $z_e$ to be seamlessly passed backward, effectively treating the quantization operation as the identity function during backpropagation.
+
+However, this Euclidean formulation is mathematically incorrect in a hyperbolic manifold. Performing standard vector addition and subtraction on points within the Poincar\'e ball will generally result in vectors that fall outside the manifold or violate its geometric properties. To construct a geometrically valid STE, we rely on the Riemannian logarithmic and exponential maps. First, we map the quantized vector $q(z_e)$ to the tangent space at $z_e$ using the logarithmic map $\log_{z_e}$. We detach this tangent vector from the computational graph, and then project it back onto the manifold using the exponential map $\exp_{z_e}$:
+\begin{equation}
+    \hat{z}_{\text{STE}} = \exp_{z_e}^c \left( \log_{z_e}^c(q(z_e))_{\text{detach}} \right)
+\end{equation}
+Because the exponential map is the inverse of the logarithmic map, this operation evaluates precisely to $q(z_e)$ in the forward pass. Crucially, during backpropagation, the detached tangent vector ensures that gradients propagate strictly through $z_e$, preserving the correct gradient flow without violating the structural constraints of the hyperbolic manifold.
+
+\section{Hyperbolic Training Objectives}
+To optimize the hyperbolic RQ-VAE, we introduce specific loss terms designed to preserve geometric constraints and exploit the hierarchical structure of the manifold.
+
+\subsection{Commitment and Codebook Loss}
+Following standard VQ-VAE training, we use commitment and codebook losses to align the encoder outputs with the discrete codebook. However, we substitute the mean squared error (MSE) with the squared hyperbolic distance. 
+The commitment loss encourages the encoder output $z_e$ to stay close to its quantized counterpart $q(z_e)$, effectively preventing the continuous embeddings from diverging wildly:
+\begin{equation}
+    \mathcal{L}_{\text{commit}} = d_{\mathbb{D}_c}^2(q(z_e), z_e)
+\end{equation}
+Conversely, the codebook loss drives the centroids towards the encoder outputs:
+\begin{equation}
+    \mathcal{L}_{\text{codebook}} = d_{\mathbb{D}_c}^2(z_e, q(z_e))
+\end{equation}
+When the exponential moving average (EMA) strategy is employed to update the codebook, we rely on the Einstein midpoint formulation to perform weighted updates on the manifold, effectively moving the centroids to the Fr\'echet mean of their assigned samples rather than optimizing $\mathcal{L}_{\text{codebook}}$ through standard gradient descent.
+
+\subsection{Entailment Cone Loss}
+To explicitly embed hierarchical relationships into the representation, we introduce an entailment cone loss. In a hyperbolic space, semantic entailment can be captured using regions defined by cones originating from points. A point $u$ (the parent) entails a point $v$ (the child) if $v$ lies within the cone defined by $u$. We apply this concept to the relationship between the quantized representation $q_i$ and the residual $r_i$:
+\begin{equation}
+    \mathcal{L}_{\text{cone}} = \max(0, d_{\text{angle}}(q_i, r_i) - K)
+\end{equation}
+where $d_{\text{angle}}$ is the angular distance between the vectors and $K$ is the half-aperture of the cone, which is intrinsically tied to the curvature $c$. By pushing the residual to be inside the cone of the quantized vector, we force the subsequent, finer representation to be structurally entailed by the coarser representation, imposing a strict hierarchical relationship.
+
+\subsection{Dot Product Expansion Loss}
+To further encourage continuous expansion away from the origin---characteristic of hyperbolic embeddings of trees---we introduce a dot product expansion loss. By mapping both the quantized vector $q$ and the residual $r$ to the tangent space at the origin via the logarithmic map $\log_0$, we can measure their angular alignment:
+\begin{equation}
+    \mathcal{L}_{\text{dot}} = \operatorname{ReLU} \left( - \frac{\langle \log_0(q), \log_0(r) \rangle}{\| \log_0(q) \|} \right)
+\end{equation}
+This term penalizes negative dot products, ensuring that the angle between the parent node and the residual direction is less than $90^\circ$. It encourages the residual to follow the same general direction as the quantized vector, preventing structural oscillations during deeper quantization stages.
+
+\section{Codebook Initialization and Dead Code Expiration}
+Standard codebook learning suffers from codebook collapse, where only a few vectors are routinely selected. While K-means initialization partially mitigates this, simple Euclidean K-means is geometrically invalid in hyperbolic space. 
+To ensure that the codebook represents the inherent tree structure from the onset, we implement a \textit{constructive initialization method}. This maps codebook tokens onto the hyperbolic manifold such that their hierarchical structure is explicitly embedded before training begins. 
+Additionally, we enforce an aggressive dead-code expiration mechanism based on the EMA cluster sizes. Any cluster that falls below a specific threshold $\tau_{\text{dead}}$ is flagged as dead. Its corresponding centroid is immediately replaced by a fresh, randomly selected representation from the current batch, with a minor perturbation added. In the non-Euclidean pipeline, we project the newly sampled centroid back onto the manifold. This dynamic expiry process ensures high codebook utilization without necessitating computationally expensive operations.
 
 
 
@@ -224,5 +318,4 @@ end of May/June: Write paper and report findings.
 \bibliography{bibentries}
 
 \end{document}
-
 
