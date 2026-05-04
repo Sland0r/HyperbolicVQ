@@ -10,3 +10,6 @@ geoopt
 scikit-learn
 torchvision
 hypll
+geoopt
+torchmetrics
+torch-fidelity

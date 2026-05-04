@@ -31,7 +31,10 @@ class SoundStream(nn.Module):
                  kmeans_init: bool=True,
                  pre_quant_batchnorm: bool=False,
                  remove: int=0,
-                 codebook_dim: int=None):
+                 codebook_dim: int=None,
+                 solution: bool=False,
+                 gyration: bool=False,
+                 parallel_transport: bool=False):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -50,7 +53,8 @@ class SoundStream(nn.Module):
             dimension=D, codebook_dim=codebook_dim, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, 
             codebook_weight=codebook_weight, commitment_weight=commitment_weight,
             dot_product_weight=dot_product_weight, entailment_cone_weight=entailment_cone_weight,
-            c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove)
+            c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove, solution=solution, gyration=gyration,
+            parallel_transport=parallel_transport)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(

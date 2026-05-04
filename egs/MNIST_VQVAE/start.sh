@@ -42,10 +42,10 @@ LAMBDA_SEP=0.0
 
 # CODEBOOK
 THRESHOLD_EMA_DEAD_CODE=2
-CODEBOOK_WEIGHT=1.0     # codes towards encoder output
+CODEBOOK_WEIGHT=0.0     # codes towards encoder output
 COMMITMENT_WEIGHT=0.25  # encoder outputs towards codes
 DOT_PRODUCT_WEIGHT=0.0
-ENTAILMENT_CONE_WEIGHT=0.25
+ENTAILMENT_CONE_WEIGHT=0.0
 
 
 python3 -u train.py \

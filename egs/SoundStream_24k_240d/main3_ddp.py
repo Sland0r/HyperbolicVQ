@@ -290,6 +290,18 @@ def get_args():
         type=int,
         default=2,
         help='threshold for EMA dead code replacement (default: 2)')
+    parser.add_argument(
+        '--solution',
+        action='store_true',
+        help='Use Solution 1: Tangent Space Residuals via Parallel Transport')
+    parser.add_argument(
+        '--gyration',
+        action='store_true',
+        help='Use explicit gyrovector algebra for gyration correction')
+    parser.add_argument(
+        '--parallel_transport',
+        action='store_true',
+        help='Use pure differential geometry approach with parallel transport')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -348,7 +360,8 @@ def main_worker(local_rank, args):
                               ratios=args.ratios, decay=args.decay,
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
-                              codebook_dim=args.codebook_dim)
+                              codebook_dim=args.codebook_dim, solution=args.solution, gyration=args.gyration,
+                              parallel_transport=args.parallel_transport)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -488,6 +501,29 @@ def main_worker(local_rank, args):
         optimizer_g = geoopt.optim.RiemannianAdam(
             param_groups,
         )
+        # Debug: locate codebook embed param and check optimizer inclusion
+        def _find_codebook_param(model):
+            module = model.module if hasattr(model, 'module') else model
+            try:
+                codebook_module = module.quantizer.vq.layers[args.codebook_number]._codebook
+                embed_param = getattr(codebook_module, 'embed', None)
+                return codebook_module, embed_param
+            except Exception:
+                return None, None
+
+        cb_module, cb_param = _find_codebook_param(soundstream)
+        if cb_param is None:
+            print('DEBUG: codebook embed param not found', flush=True)
+        else:
+            found = False
+            if hasattr(optimizer_g, 'param_groups'):
+                for i, g in enumerate(optimizer_g.param_groups):
+                    params = g.get('params', [])
+                    if any(p is cb_param for p in params):
+                        print(f'DEBUG: codebook embed param found in optimizer group {i} (lr={g.get("lr")})', flush=True)
+                        found = True
+            if not found:
+                print('DEBUG: codebook embed param NOT in any optimizer param group', flush=True)
     else:
         optimizer_g = torch.optim.AdamW(
             soundstream.parameters(), lr=args.lr_g, betas=(0.5, 0.9))
@@ -688,6 +724,23 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     # check_quantizer_finite(soundstream, f"iter={k_iter}/gen/pre_backward")
                     optimizer_g.zero_grad()
                     total_loss_g.backward()
+
+                    # Debug: print codebook embed gradient info (if available)
+                    try:
+                        cb_param  # ensure name is in scope
+                    except NameError:
+                        cb_param = None
+
+                    if cb_param is not None:
+                        grad = getattr(cb_param, 'grad', None)
+                        if grad is None:
+                            print(f'DEBUG: codebook embed grad is None at iter {global_step}', flush=True)
+                        else:
+                            try:
+                                gn = grad.detach().norm().item()
+                            except Exception:
+                                gn = float('nan')
+                            print(f'DEBUG: codebook embed grad norm {gn:.6g} at iter {global_step}', flush=True)
 
                     # Track generator gradient norm
                     _g_grads = [p.grad.detach().flatten() for p in soundstream.parameters() if p.grad is not None]

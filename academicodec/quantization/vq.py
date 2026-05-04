@@ -55,6 +55,9 @@ class ResidualVectorQuantizer(nn.Module):
             c: float=0.0,
             remove: int=0,
             ema: bool=True,
+            solution: bool=False,
+            gyration: bool=False,
+            parallel_transport: bool=False,
             ):
         super().__init__()
         self.n_q = n_q
@@ -68,6 +71,9 @@ class ResidualVectorQuantizer(nn.Module):
         self.c = c
         self.remove = remove
         self.ema = ema
+        self.solution = solution
+        self.gyration = gyration
+        self.parallel_transport = parallel_transport
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_dim=self.codebook_dim,
@@ -83,7 +89,10 @@ class ResidualVectorQuantizer(nn.Module):
             entailment_cone_weight=entailment_cone_weight,
             c=self.c,
             remove=self.remove,
-            ema=self.ema)
+            ema=self.ema,
+            solution=self.solution,
+            gyration=self.gyration,
+            parallel_transport=self.parallel_transport)
 
     def forward(self,
                 x: torch.Tensor,
