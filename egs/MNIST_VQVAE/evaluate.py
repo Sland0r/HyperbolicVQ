@@ -46,6 +46,19 @@ def load_model(args, device):
     in_channels = 3 if args.dataset == "cifar100" else 1
     img_size = 32 if args.dataset == "cifar100" else 28
 
+    if hasattr(config, "size"):
+        model_size = config.size
+    else:
+        train_dataset = getattr(config, "dataset", args.dataset)
+        if train_dataset == "mnist":
+            model_size = "small"
+        elif train_dataset == "emnist":
+            model_size = "medium"
+        elif train_dataset == "cifar100":
+            model_size = "large"
+        else:
+            model_size = "small"
+
     model = VQVAE2D(
         D=config.D,
         n_q=config.n_q,
@@ -62,6 +75,9 @@ def load_model(args, device):
         entailment_cone_weight=getattr(config, "entailment_cone_weight", 0.0),
         in_channels=in_channels,
         img_size=img_size,
+        size=model_size,
+        solution=getattr(config, "solution", False),
+        gyration=getattr(config, "gyration", False),
     ).to(device)
 
     print(f"Loading weights from {args.checkpoint}...")
@@ -160,9 +176,9 @@ def generate_and_evaluate(model, config, val_loader, args, device, output_dir):
     # Sample codes
     sampled_codes = []
     for q in range(config.n_q):
-        # Sample B indices for this quantizer level
-        samples = torch.multinomial(probs[q], args.num_samples, replacement=True)
-        sampled_codes.append(samples.unsqueeze(1)) # (num_samples, 1) -> since N=1
+        # Sample B * N indices for this quantizer level
+        samples = torch.multinomial(probs[q], args.num_samples * model.frame_rate, replacement=True)
+        sampled_codes.append(samples.reshape(args.num_samples, model.frame_rate)) # (num_samples, N)
         
     sampled_codes = torch.stack(sampled_codes, dim=0).to(device) # (n_q, num_samples, N)
     
@@ -284,7 +300,7 @@ def evaluate_latent_interpretability(model, config, train_loader, val_loader, de
         for imgs, labels in tqdm(train_loader, desc=f"MLP Epoch {epoch+1}/{epochs}", leave=False):
             imgs, labels = imgs.to(device), labels.to(device)
             with torch.no_grad():
-                z = model.encoder(imgs).squeeze(-1) # (B, D)
+                z = model.encoder(imgs).mean(dim=-1) # (B, D)
             
             optimizer.zero_grad()
             logits = mlp(z)
@@ -299,7 +315,7 @@ def evaluate_latent_interpretability(model, config, train_loader, val_loader, de
     with torch.no_grad():
         for imgs, labels in tqdm(val_loader, desc="Evaluating MLP", leave=False):
             imgs, labels = imgs.to(device), labels.to(device)
-            z = model.encoder(imgs).squeeze(-1)
+            z = model.encoder(imgs).mean(dim=-1)
             logits = mlp(z)
             preds = logits.argmax(dim=1)
             val_correct += (preds == labels).sum().item()
@@ -318,8 +334,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Resolve the absolute path of the checkpoint to correctly determine the output directory
-    if not os.path.isabs(args.checkpoint):
-        args.checkpoint = os.path.join("/home/acolombo/VAEs/checkpoint/mnist_vqvae", args.checkpoint)
+    # if not os.path.isabs(args.checkpoint):
+    #     args.checkpoint = os.path.join("/home/acolombo/VAEs/checkpoint/mnist_vqvae", args.checkpoint)
         
     output_dir = os.path.dirname(args.checkpoint)
     os.makedirs(output_dir, exist_ok=True)

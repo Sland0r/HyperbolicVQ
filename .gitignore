@@ -1,9 +1,7 @@
 __pycache__
 dataset
 checkpoint
-logs
+logs*
 log
-logs_mnist
-logs_old
 rankings
 evaluations

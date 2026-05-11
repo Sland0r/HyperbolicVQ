@@ -18,8 +18,9 @@ class Encoder(nn.Module):
     Final output is reshaped to (B, D, N) where N = 4×4 = 16.
     """
 
-    def __init__(self, D: int = 128, in_channels: int = 1, img_size: int = 28):
+    def __init__(self, D: int = 128, in_channels: int = 1, img_size: int = 28, size: str = 'small'):
         super().__init__()
+        self.size = size
         # The third conv uses k=3 for 28×28 (7→4) and k=4 for 32×32 (8→4)
         k3 = 3 if img_size == 28 else 4
         self.net = nn.Sequential(
@@ -37,14 +38,26 @@ class Encoder(nn.Module):
         
         self.spatial_h = 4
         self.spatial_w = 4
-        self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D)
+        if size == 'small':
+            self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D)
+        elif size == 'medium':
+            self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D * 2 * 2)
+        elif size == 'large':
+            self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D * 4 * 4)
+        else:
+            raise ValueError(f"Unknown size: {size}")
 
     def forward(self, x):
         z = self.net(x)  # (B, D, 4, 4)
         B, D, H, W = z.shape
-        z = z.view(B, D * H * W)  # (B, D * N) with N=16
-        z = self.bottleneck(z) # (B, D)
-        z = z.unsqueeze(-1) # (B, D, 1)
+        z = z.reshape(B, D * H * W)  # (B, D * N) with N=16
+        z = self.bottleneck(z)
+        if self.size == 'small':
+            z = z.unsqueeze(-1) # (B, D, 1)
+        elif self.size == 'medium':
+            z = z.reshape(B, D, 4) # (B, D, 4)
+        elif self.size == 'large':
+            z = z.reshape(B, D, 16) # (B, D, 16)
         return z
 
 
@@ -54,12 +67,19 @@ class Decoder(nn.Module):
     Takes (B, D, N), reshapes to (B, D, 4, 4), upsamples back to original size.
     """
 
-    def __init__(self, D: int = 128, out_channels: int = 1, img_size: int = 28):
+    def __init__(self, D: int = 128, out_channels: int = 1, img_size: int = 28, size: str = 'small'):
         super().__init__()
         self.spatial_h = 4
         self.spatial_w = 4
         # First transposed conv uses k=3 for 28×28 (4→7) and k=4 for 32×32 (4→8)
-        self.bottleneck = nn.Linear(D, D * self.spatial_h * self.spatial_w)
+        if size == 'small':
+            self.bottleneck = nn.Linear(D, D * self.spatial_h * self.spatial_w)
+        elif size == 'medium':
+            self.bottleneck = nn.Linear(D * 2 * 2, D * self.spatial_h * self.spatial_w)
+        elif size == 'large':
+            self.bottleneck = nn.Linear(D * 4 * 4, D * self.spatial_h * self.spatial_w)
+        else:
+            raise ValueError(f"Unknown size: {size}")
         k3 = 3 if img_size == 28 else 4
         self.net = nn.Sequential(
             nn.Conv2d(D, 128, kernel_size=1),
@@ -76,9 +96,9 @@ class Decoder(nn.Module):
         )
 
     def forward(self, z):
-        z = z.squeeze(-1) # (B, D)
-        B, D = z.shape
-        z = self.bottleneck(z).view(B, D, self.spatial_h, self.spatial_w) # (B, D, 4, 4)
+        B, D, N = z.shape
+        z = z.reshape(B, D * N)
+        z = self.bottleneck(z).reshape(B, D, self.spatial_h, self.spatial_w) # (B, D, 4, 4)
         x_hat = self.net(z)
         return x_hat
 
@@ -114,9 +134,12 @@ class VQVAE2D(nn.Module):
         entailment_cone_weight: float=0.0,
         in_channels: int = 1,
         img_size: int = 28,
+        size: str = 'small',
+        solution: bool = False,
+        gyration: bool = False,
     ):
         super().__init__()
-        self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size)
+        self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size, size=size)
         self.quantizer = ResidualVectorQuantizer(
             dimension=D,
             n_q=n_q,
@@ -129,12 +152,22 @@ class VQVAE2D(nn.Module):
             entailment_cone_weight=entailment_cone_weight,
             c=c,
             ema=ema,
+            solution=solution,
+            gyration=gyration,
         )
-        self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size)
+        self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size)
         self.exponential_lambda = exponential_lambda
         self.uniform = uniform
 
-        self.frame_rate = 1 # since N=1 due to the linear bottleneck
+        if size == 'small':
+            self.frame_rate = 1
+        elif size == 'medium':
+            self.frame_rate = 4
+        elif size == 'large':
+            self.frame_rate = 16
+        else:
+            raise ValueError(f"Unknown size: {size}")
+
         self.n_q = n_q
         self.target_bandwidths = [
             n_q * math.log2(bins) * self.frame_rate / 1000

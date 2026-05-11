@@ -45,7 +45,7 @@ class ResidualVectorQuantizer(nn.Module):
             n_q: int=8,
             bins: int=1024,
             decay: float=0.99,
-            kmeans_init: bool=True,
+            kmeans_init: bool=False,
             kmeans_iters: int=50,
             threshold_ema_dead_code: int=2, 
             codebook_weight: float=1.0,
@@ -54,7 +54,7 @@ class ResidualVectorQuantizer(nn.Module):
             entailment_cone_weight: float=0.0,
             c: float=0.0,
             remove: int=0,
-            ema: bool=True,
+            ema: bool=False,
             solution: bool=False,
             gyration: bool=False,
             parallel_transport: bool=False,
@@ -115,14 +115,9 @@ class ResidualVectorQuantizer(nn.Module):
         else:
             n_q = nq
             
-        if validation:
-            quantized, codes, commit_loss, dot_vec = self.vq(x, n_q=n_q, validation=validation)
-            bw = torch.tensor(n_q * bw_per_q).to(x)
-            return quantized, codes, bw, torch.mean(commit_loss), dot_vec
-        else:
-            quantized, codes, commit_loss = self.vq(x, n_q=n_q, validation=validation)
-            bw = torch.tensor(n_q * bw_per_q).to(x)
-            return quantized, codes, bw, torch.mean(commit_loss)
+        quantized, codes, commit_loss = self.vq(x, n_q=n_q)
+        bw = torch.tensor(n_q * bw_per_q).to(x)
+        return quantized, codes, bw, torch.mean(commit_loss)
 
     def get_num_quantizers_for_bandwidth(
             self, sample_rate: int, bandwidth: tp.Optional[float]=None) -> int:

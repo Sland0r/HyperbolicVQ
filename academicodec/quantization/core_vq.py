@@ -109,7 +109,7 @@ def mobius_add(x, y, c):
 def mobius_sub(x, y, c):
     return mobius_add(x, -y, c)
 
-def hyperbolic_distance_sq(x, y, c, max_dist=10.0):
+def hyperbolic_distance_sq(x, y, c):
     m_add = mobius_sub(x, y, c) # "hyperbolic_distance_sq m_add"
     norm = m_add.norm(dim=-1, keepdim=True).clamp_min(1e-5) # "hyperbolic_distance_sq norm"
     sqrt_c = c ** 0.5
@@ -117,7 +117,7 @@ def hyperbolic_distance_sq(x, y, c, max_dist=10.0):
     dist = (2 / sqrt_c) * torch.atanh(arg) # "hyperbolic_distance_sq dist"
     return dist.pow(2) # "hyperbolic_distance_sq result"
 
-def pairwise_hyperbolic_distance_sq(x, y, c, max_dist=10.0):
+def pairwise_hyperbolic_distance_sq(x, y, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True) # "pairwise_hyperbolic_distance_sq x2"
     y2 = y.pow(2).sum(dim=-1, keepdim=True) # "pairwise_hyperbolic_distance_sq y2"
     xy = x @ y.t() # "pairwise_hyperbolic_distance_sq xy"
@@ -719,7 +719,8 @@ class ResidualVectorQuantization(nn.Module):
                 indices = layer._codebook.encode(residual)
                 quantized = layer._codebook.decode(indices)
                 if self.c > 0:
-                    residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                    #residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                    residual = project(mobius_sub(residual, quantized, self.c), self.c)
                 else:
                     residual = residual - quantized
                 all_indices.append(indices)
@@ -786,7 +787,7 @@ class ResidualVectorQuantization(nn.Module):
 
         return rearrange(quantized_out, "b n d -> b d n")
 
-    def forward(self, x, n_q: tp.Optional[int]=None, validation=False):
+    def forward(self, x, n_q: tp.Optional[int]=None):
         x = rearrange(x, "b d n -> b n d")
         if self.c > 0:
             residual = project(exp_map0(x, self.c), self.c)
@@ -799,7 +800,6 @@ class ResidualVectorQuantization(nn.Module):
         quantized_out = torch.zeros_like(residual)
         all_losses = []
         all_indices = []
-        all_dots = []
         all_quantized = []
 
         #n_q = len(self.layers)
@@ -810,10 +810,7 @@ class ResidualVectorQuantization(nn.Module):
                 quantized, indices, loss = layer(residual)
                 if i == 0:
                     residual = project(mobius_add(-quantized, residual, self.c), self.c)
-                    q_log = log_map0(quantized, self.c).detach()
-                    r_log = log_map0(residual, self.c)
-                    dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
-                    residual = r_log
+                    residual = log_map0(residual, self.c)
                     all_quantized.append(quantized)
                     
                     if self.entailment_cone_weight > 0:
@@ -824,12 +821,14 @@ class ResidualVectorQuantization(nn.Module):
                         loss = loss + self.entailment_cone_weight * cone_loss
                 else:
                     residual = residual - quantized
-                    dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
                     all_quantized.append(quantized)
                     
-                if validation:
-                    all_dots.append(dot_p_vec.flatten())
                 if self.dot_product_weight > 0:
+                    if i == 0:
+                        q_log = log_map0(quantized, self.c).detach()
+                        dot_p_vec = ((q_log * residual).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
+                    else:
+                        dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
                 all_indices.append(indices)
                 all_losses.append(loss)
@@ -856,14 +855,13 @@ class ResidualVectorQuantization(nn.Module):
                     residual = gyration(-quantized, r_in, r_raw, self.c)
                 r_in = r_raw
                 
-                q_log = log_map0(quantized, self.c).detach()
-                r_log = log_map0(r_raw, self.c)
-                dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                 
-                if validation:
-                    all_dots.append(dot_p_vec.flatten())
                 if self.dot_product_weight > 0:
+                    q_log = log_map0(quantized, self.c).detach()
+                    r_log = log_map0(r_raw, self.c)
+                    dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
+
                 if self.entailment_cone_weight > 0 and i == 0:
                     q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
                     r_hyp = project(exp_map0(r_raw, self.c), self.c)
@@ -914,14 +912,13 @@ class ResidualVectorQuantization(nn.Module):
                 # We need the r_raw equivalent for loss tracking if we want to match previous behavior
                 # But logically the quantization loss is already calculated by the layer on `r`.
                 # We just need to track the dot products for logging.
-                q_log = log_map0(quantized, self.c).detach()
-                r_log = log_map0(r, self.c)
-                dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                 
-                if validation:
-                    all_dots.append(dot_p_vec.flatten())
                 if self.dot_product_weight > 0:
+                    q_log = log_map0(quantized, self.c).detach()
+                    r_log = log_map0(r, self.c)
+                    dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
+
                 if self.entailment_cone_weight > 0 and i == 0:
                     q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
                     r_hyp = project(exp_map0(r, self.c), self.c)
@@ -945,27 +942,23 @@ class ResidualVectorQuantization(nn.Module):
                 quantized, indices, loss = layer(residual)
                     
                 if self.c > 0:
-                    residual = project(mobius_add(-quantized, residual, self.c), self.c)
-                    #residual = project(mobius_sub(residual, quantized, self.c), self.c)
-                    q_log = log_map0(quantized, self.c).detach()
-                    r_log = log_map0(residual, self.c)
-                    dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
+                    #residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                    residual = project(mobius_sub(residual, quantized, self.c), self.c)
                     all_quantized.append(quantized)
                     #quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
                     
                 else:
                     residual = residual - quantized
-                    dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
                     quantized_out = quantized_out + quantized
-                    
-                # Used for logging
-                dot_p_scalar = dot_p_vec.mean()
-                
-                if validation:
-                    all_dots.append(dot_p_vec.flatten())
     
                 # Negative Dot Product -> Expansion (penalize negative dot products per-element)
                 if self.dot_product_weight > 0:
+                    if self.c > 0:
+                        q_log = log_map0(quantized, self.c).detach()
+                        r_log = log_map0(residual, self.c)
+                        dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
+                    else:
+                        dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
                     # ReLU(-x) is positive when x is negative, so it penalizes negative dot products
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
     
@@ -983,8 +976,11 @@ class ResidualVectorQuantization(nn.Module):
                 all_losses.append(loss)
     
             if self.c > 0:
-                for q in reversed(all_quantized):
-                    quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
+                # for q in reversed(all_quantized):
+                #     quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
+                quantized_out = all_quantized[0]
+                for q in all_quantized[1:]:
+                    quantized_out = project(mobius_add(quantized_out, q, self.c), self.c)
                 if self.requires_projection:
                     quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
                 else:
@@ -996,6 +992,4 @@ class ResidualVectorQuantization(nn.Module):
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
         
         quantized_out = rearrange(quantized_out, "b n d -> b d n")
-        if validation:
-            return quantized_out, out_indices, out_losses, torch.stack(all_dots)
         return quantized_out, out_indices, out_losses

@@ -90,6 +90,12 @@ def get_args():
     parser.add_argument(
         '--constructive', action='store_true',
         help='initialize codebooks using constructive tree embeddings (depth=1)')
+    parser.add_argument(
+        '--solution', action='store_true',
+        help='Use Solution 1: Tangent Space Residuals via Parallel Transport')
+    parser.add_argument(
+        '--gyration', action='store_true',
+        help='Use explicit gyrovector algebra for gyration correction')
     # args for training
     parser.add_argument(
         '--N_EPOCHS', type=int, default=50,
@@ -201,14 +207,17 @@ def main():
         in_channels, img_size = 1, 28
         train_data = datasets.MNIST(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.MNIST(root=args.data_dir, train=False, download=True, transform=transform)
+        model_size = 'small'
     elif args.dataset == "emnist":
         in_channels, img_size = 1, 28
         train_data = datasets.EMNIST(root=args.data_dir, split=args.emnist_split, train=True, download=True, transform=transform)
         val_data = datasets.EMNIST(root=args.data_dir, split=args.emnist_split, train=False, download=True, transform=transform)
+        model_size = 'medium'
     elif args.dataset == "cifar100":
         in_channels, img_size = 3, 32
         train_data = datasets.CIFAR100(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.CIFAR100(root=args.data_dir, train=False, download=True, transform=transform)
+        model_size = 'large'
     train_loader = DataLoader(train_data, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=8, pin_memory=True)
     logger.log_info(f"Train loader size: {len(train_loader)}")
     val_loader = DataLoader(val_data, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=8, pin_memory=True)
@@ -216,8 +225,8 @@ def main():
     # ── Model ─────────────────────────────────────────────────────────
     from mnist_vqvae import VQVAE2D, _count_params
 
-    if args.constructive:
-        args.threshold_ema_dead_code = 0
+    # if args.constructive:
+    #     args.threshold_ema_dead_code = 0
 
     model = VQVAE2D(
         D=args.D, n_q=args.n_q, bins=args.bins, c=args.c, 
@@ -228,7 +237,9 @@ def main():
         commitment_weight=args.commitment_weight,
         dot_product_weight=args.dot_product_weight,
         entailment_cone_weight=args.entailment_cone_weight,
-        in_channels=in_channels, img_size=img_size,
+        in_channels=in_channels, img_size=img_size, size=model_size,
+        solution=args.solution,
+        gyration=args.gyration
     ).to(device)
     logger.log_info(model)
     total, trainable = _count_params(model)
@@ -382,6 +393,14 @@ def main():
             loss.backward()
             # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+
+            # Prevent exp_avg_sq from decaying into subnormal floats which causes massive hardware slowdowns
+            if args.c > 0:
+                with torch.no_grad():
+                    for p in optimizer.param_groups[0]['params']:
+                        state = optimizer.state.get(p, None)
+                        if state is not None and 'exp_avg_sq' in state:
+                            state['exp_avg_sq'].clamp_min_(1e-32)
 
             t_bw_end = time.time()
             total_bw_time += (t_bw_end - t_bw_start)

@@ -5,7 +5,7 @@
 #SBATCH --job-name=evaluate_mnist_vqvae
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=00:20:00
+#SBATCH --time=00:30:00
 #SBATCH --output=evaluations/evaluate_%A.out
 
 module purge
@@ -13,7 +13,25 @@ module load 2025
 module load Anaconda3/2025.06-1
 source activate vaes
 
-python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/evaluate.py \
-    --checkpoint h1_dot01/latest.pth \
-    --dataset mnist \
-    --num_samples 1000
+CHECKPOINTS_DIR="/home/acolombo/VAEs/checkpoint/mnist_new"
+
+for model_dir in "$CHECKPOINTS_DIR"/*/; do
+    model_dir=${model_dir%/}
+    model_name=$(basename "$model_dir")
+    
+    # Find the best_*.pth with the highest epoch number
+    latest_best=$(ls "$model_dir"/best_*.pth 2>/dev/null | sort -V | tail -n 1)
+    
+    if [ -z "$latest_best" ]; then
+        echo "No best_*.pth found in $model_name, skipping..."
+        continue
+    fi
+    
+    best_file=$(basename "$latest_best")
+    echo "Evaluating $model_name using $best_file"
+    
+    python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/evaluate.py \
+        --checkpoint "$CHECKPOINTS_DIR/$model_name/$best_file" \
+        --dataset mnist \
+        --num_samples 100
+done
