@@ -76,6 +76,9 @@ def get_args():
         '--entailment_cone_weight', type=float, default=0.0,
         help='entailment_cone_weight for codebook (default: 0.0)')
     parser.add_argument(
+        '--gyration_weight', type=float, default=0.0,
+        help='gyration penalty weight: penalizes sin(angle) between code and residual to minimize gyration rotation (default: 0.0)')
+    parser.add_argument(
         '--pre_quant_batchnorm', action='store_true',
         help='apply BatchNorm1d on encoder output right before quantization')
     parser.add_argument(
@@ -91,11 +94,14 @@ def get_args():
         '--constructive', action='store_true',
         help='initialize codebooks using constructive tree embeddings (depth=1)')
     parser.add_argument(
-        '--solution', action='store_true',
-        help='Use Solution 1: Tangent Space Residuals via Parallel Transport')
+        '--new_method', action='store_true',
+        help='Use left-subtraction encoding with right-associative decoding (default: True)')
     parser.add_argument(
-        '--gyration', action='store_true',
-        help='Use explicit gyrovector algebra for gyration correction')
+        '--approx', action='store_true',
+        help='Track hyperbolic approximation distance (quantized+residual vs input)')
+    parser.add_argument(
+        '--hste', action='store_true',
+        help='Use hyperbolic straight-through estimator instead of Euclidean STE')
     # args for training
     parser.add_argument(
         '--N_EPOCHS', type=int, default=50,
@@ -229,17 +235,19 @@ def main():
     #     args.threshold_ema_dead_code = 0
 
     model = VQVAE2D(
-        D=args.D, n_q=args.n_q, bins=args.bins, c=args.c, 
-        exponential_lambda=args.exponential_lambda, uniform=args.uniform, ema=args.ema, 
-        kmeans_init=args.kmeans_init, 
-        threshold_ema_dead_code=args.threshold_ema_dead_code, 
+        D=args.D, n_q=args.n_q, bins=args.bins, c=args.c,
+        exponential_lambda=args.exponential_lambda, uniform=args.uniform, ema=args.ema,
+        kmeans_init=args.kmeans_init,
+        threshold_ema_dead_code=args.threshold_ema_dead_code,
         codebook_weight=args.codebook_weight,
         commitment_weight=args.commitment_weight,
         dot_product_weight=args.dot_product_weight,
         entailment_cone_weight=args.entailment_cone_weight,
+        gyration_weight=args.gyration_weight,
         in_channels=in_channels, img_size=img_size, size=model_size,
-        solution=args.solution,
-        gyration=args.gyration
+        new_method=args.new_method,
+        approx=args.approx,
+        hste=args.hste,
     ).to(device)
     logger.log_info(model)
     total, trainable = _count_params(model)
@@ -270,7 +278,7 @@ def main():
         )
 
         # Skip root (index 0, at origin); keep the bins children
-        code_points = embeddings[1:].to(dtype=torch.float32, device=device)  # (bins, D)
+        code_points = embeddings[1:].to(dtype=torch.float32, device=device) / args.n_q  # (bins, D)
         assert code_points.shape == (args.bins, args.D), \
             f"Expected ({args.bins}, {args.D}), got {code_points.shape}"
 
@@ -339,13 +347,13 @@ def main():
     # ── Training loop ─────────────────────────────────────────────────
     best_val_loss = float("inf")
     best_val_epoch = -1
-    history = {"train_rec": [], "train_com": [], "val_rec": [], "val_com": [], "val_total": [], "train_sep": []}
+    history = {"train_rec": [], "train_com": [], "val_rec": [], "val_com": [], "val_total": [], "train_sep": [], "train_dist": [], "val_dist": []}
     all_val_ppls = []    # list of per-epoch val PPL lists  (one list per epoch)
     all_train_ppls = []  # list of per-epoch train PPL lists (whole epoch)
     pbar = tqdm(range(st_epoch, args.N_EPOCHS + 1), desc="Training")
     for epoch in pbar:
         model.train()
-        train_rec, train_com, train_sep_sum, n_batches = 0.0, 0.0, 0.0, 0
+        train_rec, train_com, train_sep_sum, train_dist_sum, n_batches = 0.0, 0.0, 0.0, 0.0, 0
         total_fw_time, total_bw_time, total_iter_time = 0.0, 0.0, 0.0
 
         # ── Train PPL histograms ────────────────────────────────────
@@ -362,7 +370,7 @@ def main():
             imgs = imgs.to(device)
 
             t_fw_start = time.time()
-            x_hat, latent_loss, codes = model(imgs)
+            x_hat, latent_loss, codes, distance = model(imgs)
             rec_loss = F.mse_loss(x_hat, imgs)
             loss = rec_loss + args.LAMBDA_LAT * latent_loss
             t_fw_end = time.time()
@@ -408,6 +416,7 @@ def main():
 
             train_rec += rec_loss.item()
             train_com += latent_loss.item()
+            train_dist_sum += distance.item()
             n_batches += 1
 
             # ── Accumulate train code usage for PPL ──────────────
@@ -461,17 +470,17 @@ def main():
 
         # ── Validation ────────────────────────────────────────────────
         model.eval()
-        val_rec, val_com, val_n = 0.0, 0.0, 0
+        val_rec, val_com, val_dist_sum, val_n = 0.0, 0.0, 0.0, 0
         codes_hist = None
         all_val_dots = []
         with torch.no_grad():
             for imgs, _ in val_loader:
                 imgs = imgs.to(device)
-                x_hat, latent_loss, codes, dot_vec = model(imgs, validation=True)
-                all_val_dots.append(dot_vec.cpu())
+                x_hat, latent_loss, codes, distance = model(imgs)
                 rec_loss = F.mse_loss(x_hat, imgs)
                 val_rec += rec_loss.item()
                 val_com += latent_loss.item()
+                val_dist_sum += distance.item()
                 val_n += 1
 
                 # Accumulate code usage: codes shape is (n_q, B, N)
@@ -510,12 +519,17 @@ def main():
             logger.log_info(f"  [Epoch {epoch}] Validation Dot Products > 0: [{pos_perc_str}]")
             logger.log_info(f"  [Epoch {epoch}] Validation Dot Products < 0: [{neg_perc_str}]")
 
+        train_dist_avg = train_dist_sum / n_batches
+        val_dist_avg = val_dist_sum / val_n
+
         history["train_sep"].append(train_sep_avg)
         history["train_rec"].append(train_rec)
         history["train_com"].append(train_com)
         history["val_rec"].append(val_rec)
         history["val_com"].append(val_com)
         history["val_total"].append(val_total)
+        history["train_dist"].append(train_dist_avg)
+        history["val_dist"].append(val_dist_avg)
 
         pbar.set_postfix(train_rec=f"{train_rec:.4f}", val_rec=f"{val_rec:.4f}", val_total=f"{val_total:.4f}")
 
@@ -564,7 +578,7 @@ def main():
 
     # Last model validation loss (already computed in the last epoch)
     logger.log_info(f"\n  Last model  (epoch {epoch}):  val_rec={val_rec:.5f}  "
-          f"val_com={val_com:.5f}  val_total={val_total:.5f}")
+          f"val_com={val_com:.5f}  val_total={val_total:.5f}  val_approx_dist={val_dist_avg:.5f}")
 
     # Best model validation loss
     best_ckpts = sorted(glob.glob(os.path.join(args.PATH, "best_*.pth")))
@@ -574,22 +588,24 @@ def main():
         model.load_state_dict(best_ckpt["model"])
         model.eval()
 
-        best_val_rec, best_val_com, best_val_n = 0.0, 0.0, 0
+        best_val_rec, best_val_com, best_val_dist_sum, best_val_n = 0.0, 0.0, 0.0, 0
         with torch.no_grad():
             for imgs, _ in val_loader:
                 imgs = imgs.to(device)
-                x_hat, latent_loss, codes = model(imgs)
+                x_hat, latent_loss, codes, distance = model(imgs)
                 rec_loss = F.mse_loss(x_hat, imgs)
                 best_val_rec += rec_loss.item()
                 best_val_com += latent_loss.item()
+                best_val_dist_sum += distance.item()
                 best_val_n += 1
         best_val_rec /= best_val_n
         best_val_com /= best_val_n
+        best_val_dist_avg = best_val_dist_sum / best_val_n
         best_val_total = best_val_rec + args.LAMBDA_LAT * best_val_com
         best_epoch = best_ckpt["epoch"]
 
         logger.log_info(f"  Best model  (epoch {best_epoch}):  val_rec={best_val_rec:.5f}  "
-              f"val_com={best_val_com:.5f}  val_total={best_val_total:.5f}")
+              f"val_com={best_val_com:.5f}  val_total={best_val_total:.5f}  val_approx_dist={best_val_dist_avg:.5f}")
         logger.log_info(f"  Loaded from: {best_path}")
     else:
         logger.log_info("  No best checkpoint found (training may not have reached 75% of epochs).")
@@ -601,7 +617,7 @@ def main():
     sample_imgs, _ = next(iter(val_loader))
     sample_imgs = sample_imgs[:n_examples].to(device)
     with torch.no_grad():
-        recon_imgs, _, _ = model(sample_imgs)
+        recon_imgs, _, _, _ = model(sample_imgs)
 
     sample_imgs = sample_imgs.cpu()
     recon_imgs = recon_imgs.cpu()
@@ -658,6 +674,22 @@ def main():
     fig.savefig(loss_fig_path, dpi=150)
     plt.close(fig)
     logger.log_info(f"  Loss curves saved to: {loss_fig_path}")
+
+    # ── 1b) Hyperbolic approx distance curve ─────────────────────
+    if args.approx and any(d != 0.0 for d in history["train_dist"]):
+        fig_dist, ax_dist = plt.subplots(figsize=(8, 5))
+        ax_dist.plot(epochs_range, history["train_dist"], label="Train")
+        ax_dist.plot(epochs_range, history["val_dist"], label="Val")
+        ax_dist.set_title("Hyperbolic Approximation Distance")
+        ax_dist.set_xlabel("Epoch")
+        ax_dist.set_ylabel("Mean Hyperbolic Distance²")
+        ax_dist.legend()
+        ax_dist.grid(True)
+        fig_dist.tight_layout()
+        dist_fig_path = os.path.join(args.PATH, "approx_distance.png")
+        fig_dist.savefig(dist_fig_path, dpi=150)
+        plt.close(fig_dist)
+        logger.log_info(f"  Approx distance curve saved to: {dist_fig_path}")
 
     # ── 2) PPLs per codebook (val) ──────────────────────────────
     # Each codebook gets its own subplot showing PPL across epochs

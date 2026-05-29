@@ -25,6 +25,7 @@ class SoundStream(nn.Module):
                  commitment_weight: float=0.25,
                  dot_product_weight: float=0.0,
                  entailment_cone_weight: float=0.0,
+                 gyration_weight: float=0.0,
                  c: float=0.0,
                  ema: bool=True,
                  decay: float=0.99,
@@ -32,9 +33,9 @@ class SoundStream(nn.Module):
                  pre_quant_batchnorm: bool=False,
                  remove: int=0,
                  codebook_dim: int=None,
-                 solution: bool=False,
-                 gyration: bool=False,
-                 parallel_transport: bool=False):
+                 new_method: bool=True,
+                 approx: bool=False,
+                 hste: bool=False):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -50,11 +51,12 @@ class SoundStream(nn.Module):
         self.bins = bins
         self.threshold_ema_dead_code = threshold_ema_dead_code
         self.quantizer = ResidualVectorQuantizer(
-            dimension=D, codebook_dim=codebook_dim, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code, 
+            dimension=D, codebook_dim=codebook_dim, n_q=n_q, bins=bins, threshold_ema_dead_code=self.threshold_ema_dead_code,
             codebook_weight=codebook_weight, commitment_weight=commitment_weight,
             dot_product_weight=dot_product_weight, entailment_cone_weight=entailment_cone_weight,
-            c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove, solution=solution, gyration=gyration,
-            parallel_transport=parallel_transport)
+            gyration_weight=gyration_weight,
+            c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove,
+            new_method=new_method, approx=approx, hste=hste)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(
@@ -76,15 +78,15 @@ class SoundStream(nn.Module):
             bw = self.target_bandwidths[-1]
             
         if validation:
-            quantized, codes, bandwidth, commit_loss, dot_vec = self.quantizer(
+            quantized, codes, bandwidth, commit_loss, distance = self.quantizer(
                 e, self.frame_rate, bw, validation=validation)
             o = self.decoder(quantized)
-            return o, commit_loss, None, codes, dot_vec
+            return o, commit_loss, None, codes, distance
         else:
-            quantized, codes, bandwidth, commit_loss = self.quantizer(
+            quantized, codes, bandwidth, commit_loss, distance = self.quantizer(
                 e, self.frame_rate, bw, validation=validation)
             o = self.decoder(quantized)
-            return o, commit_loss, None, codes
+            return o, commit_loss, None, codes, distance
 
     def encode(self, x, target_bw=None, st=None):
         e = self.encoder(x)

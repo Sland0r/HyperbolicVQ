@@ -132,11 +132,15 @@ class VQVAE2D(nn.Module):
         commitment_weight: float=0.25,
         dot_product_weight: float=0.0,
         entailment_cone_weight: float=0.0,
+        gyration_weight: float=0.0,
         in_channels: int = 1,
         img_size: int = 28,
         size: str = 'small',
         solution: bool = False,
         gyration: bool = False,
+        new_method: bool = True,
+        approx: bool = False,
+        hste: bool = False,
     ):
         super().__init__()
         self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size, size=size)
@@ -145,15 +149,17 @@ class VQVAE2D(nn.Module):
             n_q=n_q,
             bins=bins,
             kmeans_init=kmeans_init,
-            threshold_ema_dead_code=threshold_ema_dead_code, 
+            threshold_ema_dead_code=threshold_ema_dead_code,
             codebook_weight=codebook_weight,
             commitment_weight=commitment_weight,
             dot_product_weight=dot_product_weight,
             entailment_cone_weight=entailment_cone_weight,
+            gyration_weight=gyration_weight,
             c=c,
             ema=ema,
-            solution=solution,
-            gyration=gyration,
+            new_method=new_method,
+            approx=approx,
+            hste=hste,
         )
         self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size)
         self.exponential_lambda = exponential_lambda
@@ -193,17 +199,17 @@ class VQVAE2D(nn.Module):
             nq = self.n_q
         
         if validation:
-            quantized, codes, bandwidth, latent_loss, dot_vec = self.quantizer(
-                z, self.frame_rate, bw, nq = nq, validation=validation
+            quantized, codes, bandwidth, latent_loss, distance = self.quantizer(
+                z, self.frame_rate, bw, nq = nq
             )
             x_hat = self.decoder(quantized)
-            return x_hat, latent_loss, codes, dot_vec
+            return x_hat, latent_loss, codes, distance
         else:
-            quantized, codes, bandwidth, latent_loss = self.quantizer(
+            quantized, codes, bandwidth, latent_loss, distance = self.quantizer(
                 z, self.frame_rate, bw, nq = nq, validation=validation
             )
             x_hat = self.decoder(quantized)
-            return x_hat, latent_loss, codes
+            return x_hat, latent_loss, codes, distance
 
     def encode(self, x):
         z = self.encoder(x)
@@ -219,6 +225,174 @@ class VQVAE2D(nn.Module):
 
 # Keep old name as alias for backward compatibility
 MNISTVQVAE = VQVAE2D
+
+
+class RQTransformer(nn.Module):
+    """RQ-Transformer for autoregressive generation of RQ-VAE codes.
+
+    Follows the two-component architecture from Lee et al. (CVPR 2022):
+    - Spatial Transformer: predicts the next spatial position given all previous
+    - Depth Transformer: predicts D codes at each position autoregressively over depth
+
+    Args:
+        n_positions: T, spatial sequence length (e.g. 1 for 'small', 4 for 'medium', 16 for 'large')
+        n_depths: D, number of RQ depths (= n_q)
+        codebook_size: K, number of entries per codebook
+        embed_dim: hidden dimension for transformer layers
+        n_spatial_layers: number of spatial transformer blocks
+        n_depth_layers: number of depth transformer blocks
+        n_heads: number of attention heads
+    """
+
+    def __init__(
+        self,
+        n_positions: int,
+        n_depths: int,
+        codebook_size: int,
+        embed_dim: int = 256,
+        n_spatial_layers: int = 4,
+        n_depth_layers: int = 4,
+        n_heads: int = 8,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.n_positions = n_positions
+        self.n_depths = n_depths
+        self.codebook_size = codebook_size
+        self.embed_dim = embed_dim
+
+        self.code_embed = nn.Embedding(codebook_size, embed_dim)
+        self.spatial_pos_embed = nn.Embedding(n_positions, embed_dim)
+        self.depth_pos_embed = nn.Embedding(n_depths, embed_dim)
+        self.sos_embed = nn.Parameter(torch.randn(embed_dim))
+
+        spatial_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=n_heads, dim_feedforward=embed_dim * 4,
+            dropout=dropout, batch_first=True, norm_first=True,
+        )
+        self.spatial_transformer = nn.TransformerEncoder(spatial_layer, num_layers=n_spatial_layers)
+
+        depth_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim, nhead=n_heads, dim_feedforward=embed_dim * 4,
+            dropout=dropout, batch_first=True, norm_first=True,
+        )
+        self.depth_transformer = nn.TransformerEncoder(depth_layer, num_layers=n_depth_layers)
+
+        self.head = nn.Linear(embed_dim, codebook_size)
+
+    def _causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        return torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+
+    def _build_spatial_input(self, codes: torch.Tensor) -> torch.Tensor:
+        """Build spatial transformer input sequence.
+
+        Args:
+            codes: (B, T, D) integer code indices.
+        Returns:
+            (B, T, embed_dim) input embeddings for spatial transformer.
+        """
+        B, T, D = codes.shape
+        device = codes.device
+
+        pos = self.spatial_pos_embed(torch.arange(T, device=device))  # (T, E)
+
+        # u_1 = sos + pos[0]; u_t = pos[t] + sum of code embeds at position t-1
+        code_embeds = self.code_embed(codes)  # (B, T, D, E)
+        sum_embeds = code_embeds.sum(dim=2)  # (B, T, E)
+
+        # Shift: position t gets sum from t-1
+        shifted = torch.zeros(B, T, self.embed_dim, device=device)
+        shifted[:, 0] = self.sos_embed
+        shifted[:, 1:] = sum_embeds[:, :-1]
+
+        return shifted + pos.unsqueeze(0)
+
+    def forward(self, codes: torch.Tensor) -> torch.Tensor:
+        """Compute logits for all positions and depths.
+
+        Args:
+            codes: (B, T, D) integer code indices (ground truth for teacher forcing).
+        Returns:
+            logits: (B, T, D, K) predicted logits.
+        """
+        B, T, D = codes.shape
+        device = codes.device
+
+        # Spatial transformer
+        spatial_input = self._build_spatial_input(codes)  # (B, T, E)
+        spatial_mask = self._causal_mask(T, device)
+        h = self.spatial_transformer(spatial_input, mask=spatial_mask)  # (B, T, E)
+
+        # Depth transformer at each position
+        all_logits = []
+        depth_pos = self.depth_pos_embed(torch.arange(D, device=device))  # (D, E)
+
+        for t in range(T):
+            # Build depth input: v_{t,1} = depth_pos[0] + h_t
+            # v_{t,d} = depth_pos[d] + sum of code embeds at depths 1..d-1
+            context = h[:, t]  # (B, E)
+            code_embeds_t = self.code_embed(codes[:, t])  # (B, D, E)
+
+            depth_input = torch.zeros(B, D, self.embed_dim, device=device)
+            depth_input[:, 0] = depth_pos[0] + context
+            for d in range(1, D):
+                depth_input[:, d] = depth_pos[d] + code_embeds_t[:, :d].sum(dim=1)
+
+            depth_mask = self._causal_mask(D, device)
+            depth_out = self.depth_transformer(depth_input, mask=depth_mask)  # (B, D, E)
+            all_logits.append(self.head(depth_out))  # (B, D, K)
+
+        logits = torch.stack(all_logits, dim=1)  # (B, T, D, K)
+        return logits
+
+    @torch.no_grad()
+    def generate(self, n_samples: int, device: torch.device, temperature: float = 1.0, top_k: int = 0) -> torch.Tensor:
+        """Autoregressively sample codes.
+
+        Args:
+            n_samples: batch size to generate.
+            device: torch device.
+            temperature: sampling temperature.
+            top_k: if > 0, only sample from top-k logits.
+        Returns:
+            codes: (B, T, D) sampled code indices.
+        """
+        B, T, D = n_samples, self.n_positions, self.n_depths
+        codes = torch.zeros(B, T, D, dtype=torch.long, device=device)
+
+        for t in range(T):
+            # Rebuild spatial input up to position t
+            spatial_input = torch.zeros(B, t + 1, self.embed_dim, device=device)
+            pos = self.spatial_pos_embed(torch.arange(t + 1, device=device))
+            spatial_input[:, 0] = self.sos_embed + pos[0]
+            for prev_t in range(1, t + 1):
+                prev_embeds = self.code_embed(codes[:, prev_t - 1]).sum(dim=1)  # (B, E)
+                spatial_input[:, prev_t] = prev_embeds + pos[prev_t]
+
+            spatial_mask = self._causal_mask(t + 1, device)
+            h = self.spatial_transformer(spatial_input, mask=spatial_mask)
+            context = h[:, t]  # (B, E)
+
+            # Depth transformer: predict D codes one by one
+            depth_pos = self.depth_pos_embed(torch.arange(D, device=device))
+            for d in range(D):
+                depth_input = torch.zeros(B, d + 1, self.embed_dim, device=device)
+                depth_input[:, 0] = depth_pos[0] + context
+                for prev_d in range(1, d + 1):
+                    depth_input[:, prev_d] = depth_pos[prev_d] + self.code_embed(codes[:, t, :prev_d]).sum(dim=1)
+
+                depth_mask = self._causal_mask(d + 1, device)
+                depth_out = self.depth_transformer(depth_input, mask=depth_mask)
+                logits = self.head(depth_out[:, d]) / temperature  # (B, K)
+
+                if top_k > 0:
+                    top_vals, _ = logits.topk(top_k, dim=-1)
+                    logits[logits < top_vals[:, -1:]] = float('-inf')
+
+                probs = torch.softmax(logits, dim=-1)
+                codes[:, t, d] = torch.multinomial(probs, 1).squeeze(-1)
+
+        return codes
 
 
 def _count_params(model):

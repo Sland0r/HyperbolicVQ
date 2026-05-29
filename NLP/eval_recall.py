@@ -197,14 +197,86 @@ class Seq2SeqTransformer(nn.Module):
         return beam_seqs[:, :, 1:]  # (B, beam_size, n_q)
 
 
-def run_evaluation(hrq_model_path="hrq_model.pt", c=1.0, embed_dim=16, n_q=4, bins=128, epochs=10, teacher_forcing=False, batch_size=128):
+def compute_baselines(dataset, k=10):
+    """No-model sanity baselines that expose split leakage.
+
+    Returns (popularity@k, composition@k) as percentages on the test set.
+    Both ignore the learned multitokens entirely:
+      - popularity:  predict the k globally most frequent train hypernyms for
+                     every source (input-blind floor).
+      - composition: for each test source u, take every node reachable from u
+                     by following TRAIN edges transitively, rank by global
+                     frequency, keep the top k. This is exactly the recall a
+                     model gets "for free" by reconstructing the training graph,
+                     so model >> composition is what indicates the multitokens
+                     actually contribute.
+    """
+    import sys
+    from collections import Counter, defaultdict
+
+    train = dataset.train_pairs
+    test = dataset.test_pairs
+    n = len(test)
+    if n == 0:
+        return 0.0, 0.0
+
+    gfreq = Counter(v for _, v in train)
+    top_set = set(v for v, _ in gfreq.most_common(k))
+    pop_hits = sum(1 for _, v in test if v in top_set)
+
+    parents = defaultdict(set)
+    for u, v in train:
+        parents[u].add(v)
+
+    sys.setrecursionlimit(1_000_000)
+    reach_cache = {}
+
+    def reach(u):
+        if u in reach_cache:
+            return reach_cache[u]
+        reach_cache[u] = set()  # guard against cycles (noun DAG is acyclic)
+        acc = set(parents[u])
+        for p in parents[u]:
+            acc |= reach(p)
+        reach_cache[u] = acc
+        return acc
+
+    comp_hits = 0
+    for u, v in test:
+        cand = sorted(reach(u), key=lambda x: -gfreq[x])[:k]
+        if v in cand:
+            comp_hits += 1
+
+    return pop_hits / n * 100, comp_hits / n * 100
+
+
+def load_config(checkpoint_dir):
+    """Load training config from checkpoint directory."""
+    config_path = os.path.join(checkpoint_dir, 'config.py')
+    cfg = {}
+    with open(config_path) as f:
+        exec(f.read(), cfg)
+    return {k: v for k, v in cfg.items() if not k.startswith('_')}
+
+
+def run_evaluation(checkpoint_dir, epochs=10, teacher_forcing=False, batch_size=128, beam_search=False):
+    cfg = load_config(checkpoint_dir)
+    c = cfg['c']
+    embed_dim = cfg['embed_dim']
+    n_q = cfg['n_q']
+    bins = cfg['bins']
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Evaluating model with c={c}...")
 
     dataset = WordNetHierarchyDataset(num_negatives=1)
-    hrq_model = HRQModel(vocab_size=dataset.vocab_size, embed_dim=embed_dim, n_q=n_q, bins=bins, c=c).to(device)
-    if os.path.exists(hrq_model_path):
-        hrq_model.load_state_dict(torch.load(hrq_model_path, map_location=device))
+    hrq_model = HRQModel(
+        vocab_size=dataset.vocab_size, embed_dim=embed_dim, n_q=n_q, bins=bins, c=c,
+        new_method=cfg.get('new_method', False), hste=cfg.get('hste', False),
+    ).to(device)
+    model_path = os.path.join(checkpoint_dir, 'model.pt')
+    if os.path.exists(model_path):
+        hrq_model.load_state_dict(torch.load(model_path, map_location=device))
     hrq_model.eval()
 
     # ── Extract discrete multitokens for every noun ──────────────────
@@ -215,7 +287,7 @@ def run_evaluation(hrq_model_path="hrq_model.pt", c=1.0, embed_dim=16, n_q=4, bi
         batch_sz = 1024
         for i in range(0, dataset.vocab_size, batch_sz):
             batch_idx = all_noun_indices[i:i+batch_sz]
-            _, _, codes, _ = hrq_model(batch_idx)
+            _, _, codes, _, _ = hrq_model(batch_idx)
             codes = codes.squeeze(-1) if len(codes.shape) > 2 else codes
             if codes.size(1) == batch_idx.size(0) and codes.size(0) != batch_idx.size(0):
                 codes = codes.transpose(0, 1)
@@ -225,14 +297,14 @@ def run_evaluation(hrq_model_path="hrq_model.pt", c=1.0, embed_dim=16, n_q=4, bi
     n_unique = torch.unique(all_tokens, dim=0).shape[0]
     print(f"  Unique token sequences: {n_unique} / {all_tokens.shape[0]} total concepts")
 
-    # ── Train/test split (paper: 85/15 random split of hypernymy pairs) ──
-    pairs = dataset.hypernymy_pairs
-    random.seed(42)
-    random.shuffle(pairs)
-    split_idx = int(len(pairs) * 0.85)
-    train_pairs = pairs[:split_idx]
-    test_pairs = pairs[split_idx:]
+    train_pairs = dataset.train_pairs
+    test_pairs = dataset.test_pairs
     print(f"  Train pairs: {len(train_pairs)}, Test pairs: {len(test_pairs)}")
+
+    # No-model leakage baselines (cheap, deterministic, CPU-only)
+    pop_baseline, comp_baseline = compute_baselines(dataset, k=10)
+    print(f"  [baseline] global-popularity@10:   {pop_baseline:.1f}%")
+    print(f"  [baseline] graph-composition@10:   {comp_baseline:.1f}%")
 
     # ── Shift codebook indices: 0 is reserved for BOS ────────────────
     all_tokens = all_tokens + 1  # shift from 0..bins-1 to 1..bins
@@ -264,56 +336,68 @@ def run_evaluation(hrq_model_path="hrq_model.pt", c=1.0, embed_dim=16, n_q=4, bi
         if (ep + 1) % 10 == 0:
             print(f"  Epoch {ep+1}/{epochs}, avg loss: {epoch_loss / n_batches:.4f}")
 
-    # ── Evaluate Recall@10 via beam search ────────────────────────────
-    # For each test pair (u, v), use beam search to generate top-10
-    # candidate multitokens for the hypernym of u, then check if v's
-    # multitoken appears in the beam.
-    print("Evaluating Recall@10...")
-    hits = 0
+    # ── Evaluate Recall@k ───────────────────────────────────────────
     transformer.eval()
     k = 10
 
-    eval_batch_size = 512
-    with torch.no_grad():
-        for i in tqdm(range(0, len(test_pairs), eval_batch_size), desc="Recall eval"):
-            batch_pairs = test_pairs[i:i+eval_batch_size]
-            src_indices = torch.tensor([u for u, v in batch_pairs], device=device)
-            tgt_indices = torch.tensor([v for u, v in batch_pairs], device=device)
-            src_tokens_batch = all_tokens[src_indices]   # (B, n_q)
-            tgt_tokens_batch = all_tokens[tgt_indices]   # (B, n_q)
+    if beam_search:
+        print(f"Evaluating Recall@{k} (beam search, beam_size={k})...")
+        hits = 0
+        eval_batch_size = 512
+        with torch.no_grad():
+            for i in tqdm(range(0, len(test_pairs), eval_batch_size), desc="Recall eval"):
+                batch_pairs = test_pairs[i:i+eval_batch_size]
+                src_indices = torch.tensor([u for u, v in batch_pairs], device=device)
+                tgt_indices = torch.tensor([v for u, v in batch_pairs], device=device)
+                src_tokens_batch = all_tokens[src_indices]   # (B, n_q)
+                tgt_tokens_batch = all_tokens[tgt_indices]   # (B, n_q)
 
-            # Batched beam search: (B, k, n_q)
-            candidates = transformer.beam_search_batch(src_tokens_batch, beam_size=k)
-            # Check matches: (B, k, n_q) vs (B, 1, n_q)
-            matches = (candidates == tgt_tokens_batch.unsqueeze(1)).all(dim=-1).any(dim=-1)  # (B,)
-            hits += matches.sum().item()
+                candidates = transformer.beam_search_batch(src_tokens_batch, beam_size=k)
+                matches = (candidates == tgt_tokens_batch.unsqueeze(1)).all(dim=-1).any(dim=-1)
+                hits += matches.sum().item()
+    else:
+        print(f"Evaluating Recall@{k} (greedy top-{k})...")
+        hits = 0
+        eval_batch_size = 512
+        with torch.no_grad():
+            for i in tqdm(range(0, len(test_pairs), eval_batch_size), desc="Recall eval"):
+                batch_pairs = test_pairs[i:i+eval_batch_size]
+                src_indices = torch.tensor([u for u, v in batch_pairs], device=device)
+                tgt_indices = torch.tensor([v for u, v in batch_pairs], device=device)
+                src_tokens_batch = all_tokens[src_indices]   # (B, n_q)
+                tgt_tokens_batch = all_tokens[tgt_indices]   # (B, n_q)
+
+                logits = transformer(src_tokens_batch, tgt_tokens_batch, teacher_forcing=False)
+                topk_preds = logits.topk(k, dim=-1).indices  # (B, n_q, k)
+                tgt_expanded = tgt_tokens_batch.unsqueeze(-1)  # (B, n_q, 1)
+                position_hits = (topk_preds == tgt_expanded).any(dim=-1)  # (B, n_q)
+                matches = position_hits.all(dim=-1)  # (B,)
+                hits += matches.sum().item()
 
     recall_k = hits / len(test_pairs) * 100
+    decode_mode = "beam search" if beam_search else "greedy"
     model_type = "HRQ" if c > 0 else "RQ"
     print(f"\n=========================================")
-    print(f"  Recall@{k} for {model_type} (c={c}): {recall_k:.1f}%")
+    print(f"  Recall@{k} for {model_type} (c={c}, {decode_mode}): {recall_k:.1f}%")
     print(f"  (unique codes: {n_unique}, test pairs: {len(test_pairs)})")
+    print(f"  no-model baselines -> popularity@{k}: {pop_baseline:.1f}%, composition@{k}: {comp_baseline:.1f}%")
+    print(f"  (model meaningfully beats leakage only if {recall_k:.1f}% >> {comp_baseline:.1f}%)")
     print(f"=========================================\n")
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--c', type=float, default=1.0)
-    parser.add_argument('--model_path', type=str, default='hrq_model.pt')
-    parser.add_argument('--teacher_forcing', action='store_true', help='Enable teacher forcing during training')
-    parser.add_argument('--embed_dim', type=int, default=16)
-    parser.add_argument('--n_q', type=int, default=4)
-    parser.add_argument('--bins', type=int, default=128)
+    parser.add_argument('--model_path', type=str, required=True,
+                        help='Checkpoint subdirectory name under checkpoint/nlp/')
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=512)
+    parser.add_argument('--teacher_forcing', action='store_true')
+    parser.add_argument('--beam_search', action='store_true')
     args = parser.parse_args()
     run_evaluation(
-        hrq_model_path=args.model_path,
-        c=args.c,
-        embed_dim=args.embed_dim,
-        n_q=args.n_q,
-        bins=args.bins,
+        checkpoint_dir='/home/acolombo/VAEs/checkpoint/nlp/' + args.model_path,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        teacher_forcing=args.teacher_forcing
+        teacher_forcing=args.teacher_forcing,
+        beam_search=args.beam_search,
     )

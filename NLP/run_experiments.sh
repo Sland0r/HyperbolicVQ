@@ -5,7 +5,7 @@
 #SBATCH --job-name=nlp_hrq
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=logs_nlp/nlp_hrq_%A.out
 
 module purge
@@ -17,7 +17,7 @@ export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
 # Paper (Appendix C.1) hyperparameters
 BATCH_SIZE=1024
-EPOCHS=10
+EPOCHS=50
 LEARNING_RATE=1.0
 WARMUP_LR=0.01
 WARMUP_EPOCHS=0
@@ -30,7 +30,8 @@ BINS=128
 
 echo "Starting NLP Experiments for HRQ..."
 
-mkdir -p checkpoint/nlp
+SAVE_DIR="/home/acolombo/VAEs/checkpoint/nlp/${SLURM_JOB_ID}"
+mkdir -p ${SAVE_DIR}
 
 echo "=========================================="
 echo "Running experiments for C=${C}"
@@ -55,16 +56,17 @@ python3 -u /home/acolombo/VAEs/NLP/train_hierarchy.py \
     --lr ${LEARNING_RATE} \
     --warmup_lr ${WARMUP_LR} \
     --warmup_epochs ${WARMUP_EPOCHS} \
-    --save_path checkpoint/nlp/hrq_model_c${C}_ep${EPOCHS}.pt
+    --save_dir ${SAVE_DIR} \
+    --approx \
+    #--hste \
+    #--new_method \
+    #--constructive
 
 echo "2. Evaluate Models"
 
 python3 -u /home/acolombo/VAEs/NLP/eval_recall.py \
-    --c ${C} \
-    --model_path /home/acolombo/VAEs/checkpoint/nlp/hrq_model_c${C}_ep${EPOCHS}.pt \
-    --embed_dim ${EMBED_DIM} \
-    --n_q ${N_Q} \
-    --bins ${BINS} \
-    --teacher_forcing
+    --model_path ${SLURM_JOB_ID} \
+    # --teacher_forcing \
+    # --beam_search \
 
 echo "Done!"

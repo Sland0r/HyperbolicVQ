@@ -286,7 +286,7 @@ def evaluate(args, soundstream, stft_disc, msd, mpd, valid_loader, logger):
                 x_wav = get_input(x)
                 # G_x is the reconstructed waveform, codes is the indices
                 if optimizer_idx == 0:
-                    G_x, commit_loss, last_layer, codes = soundstream(x_wav)
+                    G_x, commit_loss, last_layer, codes, _ = soundstream(x_wav)
                     # Tracking Codebook Perplexity
                     # codes shape: [batch, num_quantizers, time]
                     if codes_hist is None:
@@ -332,7 +332,7 @@ def evaluate(args, soundstream, stft_disc, msd, mpd, valid_loader, logger):
                     valid_feat_loss += feat_loss.item()
                     valid_rec_loss += rec_loss.item()
                 else:
-                    G_x, _, _, _ = soundstream(x_wav)
+                    G_x, _, _, _, _ = soundstream(x_wav)
                     y_disc_r_det, fmap_r_det = stft_disc(
                         x_wav.contiguous().detach())
                     y_disc_gen_det, fmap_gen_det = stft_disc(

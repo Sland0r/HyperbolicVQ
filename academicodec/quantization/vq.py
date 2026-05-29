@@ -47,17 +47,18 @@ class ResidualVectorQuantizer(nn.Module):
             decay: float=0.99,
             kmeans_init: bool=False,
             kmeans_iters: int=50,
-            threshold_ema_dead_code: int=2, 
+            threshold_ema_dead_code: int=2,
             codebook_weight: float=1.0,
             commitment_weight: float=0.25,
             dot_product_weight: float=0.0,
             entailment_cone_weight: float=0.0,
+            gyration_weight: float=0.0,
             c: float=0.0,
             remove: int=0,
             ema: bool=False,
-            solution: bool=False,
-            gyration: bool=False,
-            parallel_transport: bool=False,
+            new_method: bool=True,
+            approx: bool=False,
+            hste: bool=False,
             ):
         super().__init__()
         self.n_q = n_q
@@ -71,9 +72,9 @@ class ResidualVectorQuantizer(nn.Module):
         self.c = c
         self.remove = remove
         self.ema = ema
-        self.solution = solution
-        self.gyration = gyration
-        self.parallel_transport = parallel_transport
+        self.new_method = new_method
+        self.approx = approx
+        self.hste = hste
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_dim=self.codebook_dim,
@@ -87,12 +88,12 @@ class ResidualVectorQuantizer(nn.Module):
             commitment_weight=commitment_weight,
             dot_product_weight=dot_product_weight,
             entailment_cone_weight=entailment_cone_weight,
+            gyration_weight=gyration_weight,
             c=self.c,
             remove=self.remove,
             ema=self.ema,
-            solution=self.solution,
-            gyration=self.gyration,
-            parallel_transport=self.parallel_transport)
+            new_method=self.new_method,
+            hste=self.hste)
 
     def forward(self,
                 x: torch.Tensor,
@@ -115,9 +116,9 @@ class ResidualVectorQuantizer(nn.Module):
         else:
             n_q = nq
             
-        quantized, codes, commit_loss = self.vq(x, n_q=n_q)
+        quantized, codes, commit_loss, distance = self.vq(x, n_q=n_q, approx=self.approx)
         bw = torch.tensor(n_q * bw_per_q).to(x)
-        return quantized, codes, bw, torch.mean(commit_loss)
+        return quantized, codes, bw, torch.mean(commit_loss), distance
 
     def get_num_quantizers_for_bandwidth(
             self, sample_rate: int, bandwidth: tp.Optional[float]=None) -> int:

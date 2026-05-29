@@ -2,11 +2,11 @@
 
 #SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
-#SBATCH --job-name=train_cifar100_vqvae
+#SBATCH --job-name=train_cifar100
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=01:40:00
-#SBATCH --output=logs_cifar100/train_cifar100_vqvae_%A.out
+#SBATCH --time=02:40:00
+#SBATCH --output=logs_cifar100/train_cifar100_%A.out
 
 module purge
 module load 2025
@@ -18,7 +18,7 @@ export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 cd /home/acolombo/VAEs/egs/MNIST_VQVAE
 
 #PATH
-SAVE_PATH="/home/acolombo/VAEs/checkpoint/cifar_vqvae/"
+SAVE_PATH="/home/acolombo/VAEs/checkpoint/cifar100_vqvae/"
 
 #POINCARE 
 C=1.0
@@ -40,7 +40,7 @@ BINS=40
 # LEARNING RATES AND LOSSES
 LR_G=3e-4
 LR_MANIFOLD=1e-4
-LAMBDA_LAT=1 # applied on top of all weights below
+LAMBDA_LAT=0.1 # applied on top of all weights below
 LAMBDA_SEP=0.0
 
 # CODEBOOK
@@ -73,11 +73,11 @@ python3 -u train.py \
         --number_of_steps $NUMBER_OF_STEPS \
         --c $C \
         --exponential_lambda $EXPONENTIAL_LAMBDA \
+        --approx \
+        --new_method \
+        #--hste \
         #--constructive \
-        #--gyration
         #--uniform \
-        #--ema \
-        #--kmeans_init \
 
 
 CHECKPOINT="$SAVE_PATH/$SLURM_JOB_ID/latest.pth"

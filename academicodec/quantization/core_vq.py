@@ -199,28 +199,35 @@ def einstein_midpoint(z, w, c):
     mu = half_scaled * v
     return project(mu, c)
 
-def hyperbolic_ste(x, q, c):
-    # Map q into tangent space at x
-    v = log_map(x, q, c)
+class HyperbolicSTE(torch.autograd.Function):
 
-    # Reconstruct q from x (identity forward)
-    q_recon = exp_map(x, v, c)
+    @staticmethod
+    def forward(ctx, x, q, c):
+        ctx.save_for_backward(x, q)
+        ctx.c = c
+        return q
 
-    # Standard STE part (like your version)
-    ste = x + (q_recon - x).detach()
-
-    # --- Transport correction ---
-    # Move tangent vector from x to q
-    v_at_q = parallel_transport(x, q, v, c)
-
-    # Map back to x (inverse transport)
-    v_back = parallel_transport(q, x, v_at_q, c)
-
-    # Inject curvature-aware correction
-    correction = (v_back - v).detach()
-
-    return ste + correction
-
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, q = ctx.saved_tensors
+        c = ctx.c
+        # conformal factors
+        q2 = q.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
+        x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
+        lambda_q = 2 / (1 - c * q2)
+        lambda_x_ = 2 / (1 - c * x2)
+        # Euclidean -> Riemannian
+        grad_r = grad_output / (lambda_q ** 2)
+        # transport tangent vector
+        grad_r_at_x = parallel_transport(
+            q, x,
+            grad_r,
+            c
+        )
+        # Riemannian -> Euclidean
+        grad_e_at_x = grad_r_at_x * (lambda_x_ ** 2)
+        
+        return grad_e_at_x, None, None
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     if val == 0:
@@ -312,11 +319,13 @@ class EuclideanCodebook(nn.Module):
             epsilon: float=1e-5,
             threshold_ema_dead_code: int=2,
             c: float=0.,
-            ema: bool=True, ):
+            ema: bool=True,
+            gyration_weight: float=0., ):
         super().__init__()
         self.c = c
         self.decay = decay
         self.ema = ema
+        self.gyration_weight = gyration_weight
         init_fn: tp.Union[
             tp.Callable[..., torch.Tensor],
             tp.Any] = uniform_init if not kmeans_init else torch.zeros
@@ -408,6 +417,17 @@ class EuclideanCodebook(nn.Module):
     def quantize(self, x):
         if self.c > 0:
             dist = -pairwise_hyperbolic_distance_sq(x, self.embed, self.c)
+            if self.gyration_weight > 0:
+                sqrt_c = self.c ** 0.5
+                x_norm = x.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+                e_norm = self.embed.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+                cos_alpha = (x @ self.embed.t()) / (x_norm @ e_norm.t())
+                cos_alpha = cos_alpha.clamp(-1 + 1e-6, 1 - 1e-6)
+                sin_alpha = (1 - cos_alpha.pow(2)).clamp_min(0).sqrt()
+                x_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * x_norm).clamp_max(1 - 1e-5))
+                e_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * e_norm).clamp_max(1 - 1e-5))
+                penalty = self.c * (x_poincare_norm @ e_poincare_norm.t()) * sin_alpha
+                dist = dist - self.gyration_weight * penalty
         else:
             embed = self.embed.t()
             dist = -(x.pow(2).sum(1, keepdim=True) - 2 * x @ embed +
@@ -526,11 +546,14 @@ class VectorQuantization(nn.Module):
             commitment_weight: float=0.25,
             c: float=0.,
             remove: int=0,
-            ema: bool=True, ):
+            ema: bool=False,
+            hste: bool=False,
+            gyration_weight: float=0., ):
         super().__init__()
         self.c = c
         self.ema = ema
-        
+        self.hste = hste
+
         _codebook_dim: int = default(codebook_dim, dim)
 
         self.epsilon = epsilon
@@ -546,7 +569,8 @@ class VectorQuantization(nn.Module):
             epsilon=epsilon,
             threshold_ema_dead_code=threshold_ema_dead_code,
             c=c,
-            ema=ema)
+            ema=ema,
+            gyration_weight=gyration_weight)
         self.codebook_size = codebook_size
 
     @property
@@ -565,9 +589,8 @@ class VectorQuantization(nn.Module):
             #     diff = mobius_sub(quantize, x, self.c)
             #     quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             # else:
-            if self.c > 0:
-                # Hyperbolic straight-through estimator
-                quantize = exp_map(x, log_map(x, quantize, self.c).detach(), self.c)
+            if self.hste:
+                quantize = HyperbolicSTE.apply(x, quantize, self.c)
             else:
                 quantize = x + (quantize - x).detach()
 
@@ -590,11 +613,6 @@ class VectorQuantization(nn.Module):
                     codebook_loss = F.mse_loss(x.detach(), quantize_raw)
                 loss = loss + codebook_loss * self.codebook_weight
 
-        # if hasattr(self.project_out, 'manifold'):
-        #     quantize = self.project_out(ManifoldTensor(quantize, manifold=self.project_out.manifold)).tensor
-        # else:
-        #     quantize = self.project_out(quantize)
-        # quantize = rearrange(quantize, "b n d -> b d n")
         return quantize, embed_ind, loss
 
 
@@ -618,16 +636,13 @@ class ResidualVectorQuantization(nn.Module):
         self.c = kwargs.get("c", 0.0)
         self.dot_product_weight = kwargs.pop("dot_product_weight", 0.0)
         self.entailment_cone_weight = kwargs.pop("entailment_cone_weight", 0.0)
+        self.gyration_weight = kwargs.get("gyration_weight", 0.0)
         if self.entailment_cone_weight > 0 and self.c > 0:
             self.entailment_cone_loss_fn = HyperbolicEntailmentConeLoss(K=0.1, c=self.c)
-        self.solution = kwargs.pop("solution", False)
-        self.gyration = kwargs.pop("gyration", False)
-        self.parallel_transport = kwargs.pop("parallel_transport", False)
+        self.new_method = kwargs.pop("new_method", True)
         self.layers = nn.ModuleList()
         for i in range(num_quantizers):
             layer_kwargs = kwargs.copy()
-            if self.solution and self.c > 0 and i > 0:
-                layer_kwargs["c"] = 0.0
             self.layers.append(VectorQuantization(**layer_kwargs))
         self.remove = kwargs.get("remove", 0)
         dim = kwargs.get("dim", 256)
@@ -669,49 +684,11 @@ class ResidualVectorQuantization(nn.Module):
 
         all_indices = []
 
-        if self.solution and self.c > 0:
-            for i, layer in enumerate(self.layers[st:n_q]):
+        if self.new_method and self.c > 0:
+            for layer in self.layers[st:n_q]:
                 indices = layer._codebook.encode(residual)
                 quantized = layer._codebook.decode(indices)
-                if i == 0:
-                    residual = project(mobius_add(-quantized, residual, self.c), self.c)
-                    residual = log_map0(residual, self.c)
-                else:
-                    residual = residual - quantized
-                all_indices.append(indices)
-
-        elif self.gyration and self.c > 0:
-            r_in = residual
-            for i, layer in enumerate(self.layers[st:n_q]):
-                indices = layer._codebook.encode(residual)
-                quantized = layer._codebook.decode(indices)
-                r_raw = project(mobius_add(-quantized, r_in, self.c), self.c)
-                if i < n_q - st - 1:
-                    residual = gyration(-quantized, r_in, r_raw, self.c)
-                r_in = r_raw
-                all_indices.append(indices)
-
-        elif self.parallel_transport and self.c > 0:
-            q_prev = torch.zeros_like(residual)
-            r_in = residual
-            for i, layer in enumerate(self.layers[st:n_q]):
-                if i == 0:
-                    r = r_in
-                else:
-                    v = log_map(q_prev, r_in, self.c)
-                    v_0 = parallel_transport(q_prev, torch.zeros_like(q_prev), v, self.c)
-                    r = project(exp_map0(v_0, self.c), self.c)
-
-                indices = layer._codebook.encode(r)
-                quantized = layer._codebook.decode(indices)
-
-                if i == 0:
-                    q_acc = quantized
-                else:
-                    v_0 = log_map0(quantized, self.c)
-                    v = parallel_transport(torch.zeros_like(q_prev), q_prev, v_0, self.c)
-                    q_acc = project(exp_map(q_prev, v, self.c), self.c)
-                q_prev = q_acc
+                residual = project(mobius_add(-quantized, residual, self.c), self.c)
                 all_indices.append(indices)
 
         else:  # Standard mode
@@ -741,36 +718,15 @@ class ResidualVectorQuantization(nn.Module):
             quantized = self.layers[i]._codebook.decode(codes[i])  # (B, N, D)
             all_quantized.append(quantized)
 
-        if self.solution and self.c > 0:
-            euc_sum = sum(all_quantized[1:]) if len(all_quantized) > 1 else torch.zeros_like(all_quantized[0])
-            euc_on_ball = project(exp_map0(euc_sum, self.c), self.c)
-            quantized_out = project(mobius_add(all_quantized[0], euc_on_ball, self.c), self.c)
-
-        elif self.gyration and self.c > 0:
-            quantized_out = all_quantized[0]
-            prev_q = all_quantized[0]
-            for q in all_quantized[1:]:
-                approx_r_in = project(mobius_add(prev_q, q, self.c), self.c)
-                q_gyrated = gyration(prev_q, -approx_r_in, q, self.c)
-                quantized_out = project(mobius_add(quantized_out, q_gyrated, self.c), self.c)
-                prev_q = q
-
-        elif self.parallel_transport and self.c > 0:
-            q_prev = torch.zeros_like(all_quantized[0])
-            for i, q in enumerate(all_quantized):
-                if i == 0:
-                    q_acc = q
-                else:
-                    v_0 = log_map0(q, self.c)
-                    v = parallel_transport(torch.zeros_like(q_prev), q_prev, v_0, self.c)
-                    q_acc = project(exp_map(q_prev, v, self.c), self.c)
-                q_prev = q_acc
-            quantized_out = q_prev
+        if self.new_method and self.c > 0:
+            quantized_out = all_quantized[-1]
+            for q in reversed(all_quantized[:-1]):
+                quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
 
         elif self.c > 0:  # Standard hyperbolic
-            quantized_out = torch.zeros_like(all_quantized[0])
-            for q in reversed(all_quantized):
-                quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
+            quantized_out = all_quantized[0]
+            for q in all_quantized[1:]:
+                quantized_out = project(mobius_add(quantized_out, q, self.c), self.c)
 
         else:  # Standard Euclidean
             quantized_out = sum(all_quantized)
@@ -787,7 +743,7 @@ class ResidualVectorQuantization(nn.Module):
 
         return rearrange(quantized_out, "b n d -> b d n")
 
-    def forward(self, x, n_q: tp.Optional[int]=None):
+    def forward(self, x, n_q: tp.Optional[int]=None, approx: bool=False):
         x = rearrange(x, "b d n -> b n d")
         if self.c > 0:
             residual = project(exp_map0(x, self.c), self.c)
@@ -801,157 +757,94 @@ class ResidualVectorQuantization(nn.Module):
         all_losses = []
         all_indices = []
         all_quantized = []
+        distance = torch.tensor(0.0, device=x.device)
 
         #n_q = len(self.layers)
         n_q = n_q - self.remove
 
-        if self.solution and self.c > 0:
-            for i, layer in enumerate(self.layers[:n_q]):
-                quantized, indices, loss = layer(residual)
-                if i == 0:
-                    residual = project(mobius_add(-quantized, residual, self.c), self.c)
-                    residual = log_map0(residual, self.c)
-                    all_quantized.append(quantized)
-                    
-                    if self.entailment_cone_weight > 0:
-                        q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
-                        r_hyp = project(exp_map0(residual, self.c), self.c)
-                        r_flat = rearrange(r_hyp, "b n d -> (b n) d")
-                        cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
-                        loss = loss + self.entailment_cone_weight * cone_loss
-                else:
-                    residual = residual - quantized
-                    all_quantized.append(quantized)
-                    
-                if self.dot_product_weight > 0:
-                    if i == 0:
-                        q_log = log_map0(quantized, self.c).detach()
-                        dot_p_vec = ((q_log * residual).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
-                    else:
-                        dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
-                    loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
-                all_indices.append(indices)
-                all_losses.append(loss)
-                
-            quantized_out_euc = sum(all_quantized[1:]) if len(all_quantized) > 1 else torch.zeros_like(all_quantized[0])
-            quantized_out_hyp = exp_map0(quantized_out_euc, self.c)
-            quantized_out = project(mobius_add(all_quantized[0], quantized_out_hyp, self.c), self.c)
-            
-            if self.requires_projection:
-                quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
-            else:
-                quantized_out = self.project_out(quantized_out)
-            quantized_out = log_map0(quantized_out, self.c)
-
-        elif self.gyration and self.c > 0:
-            r_in = residual
+        if self.new_method and self.c > 0:
             for i, layer in enumerate(self.layers[:n_q]):
                 quantized, indices, loss = layer(residual)
                 all_quantized.append(quantized)
-                
-                r_raw = project(mobius_add(-quantized, r_in, self.c), self.c)
-                
-                if i < n_q - 1:
-                    residual = gyration(-quantized, r_in, r_raw, self.c)
-                r_in = r_raw
-                
-                
+
+                if self.entailment_cone_weight > 0:
+                    q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
+                    r_flat = rearrange(residual, "b n d -> (b n) d")
+                    cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
+                    loss = loss + self.entailment_cone_weight * cone_loss
+
+                if self.gyration_weight > 0 and self.c > 0 and self.training:
+                    q_flat = rearrange(quantized, "b n d -> (b n) d")
+                    r_flat = rearrange(residual, "b n d -> (b n) d")
+                    q_norm = q_flat.norm(dim=-1).clamp_min(1e-8)
+                    r_norm = r_flat.norm(dim=-1).clamp_min(1e-8)
+                    cos_alpha = (q_flat * r_flat).sum(dim=-1) / (q_norm * r_norm)
+                    cos_alpha = cos_alpha.clamp(-1 + 1e-6, 1 - 1e-6)
+                    sin_alpha = (1 - cos_alpha.pow(2)).clamp_min(0).sqrt()
+                    sqrt_c = self.c ** 0.5
+                    q_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * q_norm).clamp_max(1 - 1e-5))
+                    r_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * r_norm).clamp_max(1 - 1e-5))
+                    gyration_loss = (self.c * q_poincare_norm * r_poincare_norm * sin_alpha).mean()
+                    loss = loss + self.gyration_weight * gyration_loss
+
+                residual = project(mobius_add(-quantized, residual, self.c), self.c)
+
                 if self.dot_product_weight > 0:
                     q_log = log_map0(quantized, self.c).detach()
-                    r_log = log_map0(r_raw, self.c)
+                    r_log = log_map0(residual, self.c)
                     dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
 
-                if self.entailment_cone_weight > 0 and i == 0:
-                    q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
-                    r_hyp = project(exp_map0(r_raw, self.c), self.c)
-                    r_flat = rearrange(r_hyp, "b n d -> (b n) d")
-                    cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
-                    loss = loss + self.entailment_cone_weight * cone_loss
-                    
                 all_indices.append(indices)
                 all_losses.append(loss)
-                
-            quantized_out = all_quantized[0]
-            prev_q = all_quantized[0]
-            for q in all_quantized[1:]:
-                approx_r_in = project(mobius_add(prev_q, q, self.c), self.c)
-                q_gyrated = gyration(prev_q, -approx_r_in, q, self.c)
-                quantized_out = project(mobius_add(quantized_out, q_gyrated, self.c), self.c)
-                prev_q = q
+
+            quantized_out = all_quantized[-1]
+            for q in reversed(all_quantized[:-1]):
+                quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
 
             if self.requires_projection:
                 quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
             else:
                 quantized_out = self.project_out(quantized_out)
-            quantized_out = log_map0(quantized_out, self.c)
 
-        elif self.parallel_transport and self.c > 0:
-            q_prev = torch.zeros_like(residual)
-            r_in = residual
-            for i, layer in enumerate(self.layers[:n_q]):
-                # Quantize the exact tangent vector transported to 0
-                if i == 0:
-                    r = r_in
-                else:
-                    v = log_map(q_prev, r_in, self.c)
-                    v_0 = parallel_transport(q_prev, torch.zeros_like(q_prev), v, self.c)
-                    r = project(exp_map0(v_0, self.c), self.c)
-                    
-                quantized, indices, loss = layer(r)
-                all_quantized.append(quantized)
-                
-                # Update base point for next iteration exactly via parallel transport
-                if i == 0:
-                    q_acc = quantized
-                else:
-                    v_0 = log_map0(quantized, self.c)
-                    v = parallel_transport(torch.zeros_like(q_prev), q_prev, v_0, self.c)
-                    q_acc = project(exp_map(q_prev, v, self.c), self.c)
-                
-                # We need the r_raw equivalent for loss tracking if we want to match previous behavior
-                # But logically the quantization loss is already calculated by the layer on `r`.
-                # We just need to track the dot products for logging.
-                
-                if self.dot_product_weight > 0:
-                    q_log = log_map0(quantized, self.c).detach()
-                    r_log = log_map0(r, self.c)
-                    dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
-                    loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
+            if approx:
+                diff = mobius_sub(mobius_add(quantized_out, residual, self.c), project(exp_map0(x, self.c), self.c), self.c)
+                distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
 
-                if self.entailment_cone_weight > 0 and i == 0:
-                    q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
-                    r_hyp = project(exp_map0(r, self.c), self.c)
-                    r_flat = rearrange(r_hyp, "b n d -> (b n) d")
-                    cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
-                    loss = loss + self.entailment_cone_weight * cone_loss
-                    
-                all_indices.append(indices)
-                all_losses.append(loss)
-                q_prev = q_acc
-                
-            quantized_out = q_prev
-            if self.requires_projection:
-                quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
-            else:
-                quantized_out = self.project_out(quantized_out)
             quantized_out = log_map0(quantized_out, self.c)
 
         else:
             for layer in self.layers[:n_q]:
                 quantized, indices, loss = layer(residual)
-                    
+
+                # Entailment Cone Loss: push residual into the cone of quantized
+                if self.entailment_cone_weight > 0 and self.c > 0:
+                    q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
+                    r_flat = rearrange(residual, "b n d -> (b n) d")
+                    cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
+                    loss = loss + self.entailment_cone_weight * cone_loss
+
+                if self.gyration_weight > 0 and self.c > 0 and self.training:
+                    q_flat = rearrange(quantized, "b n d -> (b n) d")
+                    r_flat = rearrange(residual, "b n d -> (b n) d")
+                    q_norm = q_flat.norm(dim=-1).clamp_min(1e-8)
+                    r_norm = r_flat.norm(dim=-1).clamp_min(1e-8)
+                    cos_alpha = (q_flat * r_flat).sum(dim=-1) / (q_norm * r_norm)
+                    cos_alpha = cos_alpha.clamp(-1 + 1e-6, 1 - 1e-6)
+                    sin_alpha = (1 - cos_alpha.pow(2)).clamp_min(0).sqrt()
+                    sqrt_c = self.c ** 0.5
+                    q_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * q_norm).clamp_max(1 - 1e-5))
+                    r_poincare_norm = (2.0 / sqrt_c) * torch.atanh((sqrt_c * r_norm).clamp_max(1 - 1e-5))
+                    gyration_loss = (self.c * q_poincare_norm * r_poincare_norm * sin_alpha).mean()
+                    loss = loss + self.gyration_weight * gyration_loss
+
                 if self.c > 0:
-                    #residual = project(mobius_add(-quantized, residual, self.c), self.c)
                     residual = project(mobius_sub(residual, quantized, self.c), self.c)
                     all_quantized.append(quantized)
-                    #quantized_out = project(mobius_add(quantized_out, quantized, self.c), self.c)
-                    
                 else:
                     residual = residual - quantized
                     quantized_out = quantized_out + quantized
-    
-                # Negative Dot Product -> Expansion (penalize negative dot products per-element)
+
                 if self.dot_product_weight > 0:
                     if self.c > 0:
                         q_log = log_map0(quantized, self.c).detach()
@@ -959,19 +852,8 @@ class ResidualVectorQuantization(nn.Module):
                         dot_p_vec = ((q_log * r_log).sum(dim=-1) / q_log.norm(dim=-1).clamp_min(1e-5))
                     else:
                         dot_p_vec = (quantized.detach() * residual).sum(dim=-1) / quantized.norm(dim=-1).clamp_min(1e-5).detach()
-                    # ReLU(-x) is positive when x is negative, so it penalizes negative dot products
                     loss = loss + self.dot_product_weight * F.relu(-dot_p_vec).mean()
-    
-                # Entailment Cone Loss: push residual into the cone of quantized
-                if self.entailment_cone_weight > 0 and self.c > 0:
-                    # quantized.detach() is parent (u), residual is child (v)
-                    # Gradients only flow through the residual
-                    # Reshape from (B, N, D) to (B*N, D) for the cone loss
-                    q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
-                    r_flat = rearrange(residual, "b n d -> (b n) d")
-                    cone_loss = self.entailment_cone_loss_fn(q_flat, r_flat)
-                    loss = loss + self.entailment_cone_weight * cone_loss
-    
+
                 all_indices.append(indices)
                 all_losses.append(loss)
     
@@ -985,11 +867,17 @@ class ResidualVectorQuantization(nn.Module):
                     quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
                 else:
                     quantized_out = self.project_out(quantized_out)
+
+                if approx:
+                    diff = mobius_sub(mobius_add(quantized_out, residual, self.c), project(exp_map0(x, self.c), self.c), self.c)
+                    distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
+
                 quantized_out = log_map0(quantized_out, self.c)
             else:
                 quantized_out = self.project_out(quantized_out)
 
         out_losses, out_indices = map(torch.stack, (all_losses, all_indices))
+
         
         quantized_out = rearrange(quantized_out, "b n d -> b d n")
-        return quantized_out, out_indices, out_losses
+        return quantized_out, out_indices, out_losses, distance

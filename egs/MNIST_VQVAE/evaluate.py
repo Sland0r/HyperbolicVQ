@@ -31,6 +31,23 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "emnist", "cifar100"])
     parser.add_argument("--num_samples", type=int, default=1000, help="Number of generated samples for FID")
     parser.add_argument("--batch_size", type=int, default=128)
+    # RQ-Transformer generation (Stage 2 from Lee et al. CVPR 2022)
+    parser.add_argument("--rq_transformer", action="store_true",
+                        help="Train an RQ-Transformer prior on the frozen RQ-VAE codes, then generate samples")
+    parser.add_argument("--rq_transformer_epochs", type=int, default=50,
+                        help="Number of epochs to train the RQ-Transformer")
+    parser.add_argument("--rq_transformer_lr", type=float, default=3e-4,
+                        help="Learning rate for RQ-Transformer")
+    parser.add_argument("--rq_transformer_layers", type=int, default=4,
+                        help="Number of layers in spatial/depth transformers")
+    parser.add_argument("--rq_transformer_heads", type=int, default=8,
+                        help="Number of attention heads")
+    parser.add_argument("--rq_transformer_dim", type=int, default=256,
+                        help="Hidden dimension for RQ-Transformer")
+    parser.add_argument("--rq_temperature", type=float, default=1.0,
+                        help="Sampling temperature for generation")
+    parser.add_argument("--rq_top_k", type=int, default=0,
+                        help="Top-k filtering for sampling (0 = disabled)")
     return parser.parse_args()
 
 def load_model(args, device):
@@ -108,19 +125,19 @@ def evaluate_robustness(model, val_loader, device, output_dir):
             with torch.no_grad():
                 # 1. Input noise
                 noisy_imgs = imgs + torch.randn_like(imgs) * sigma
-                recon_in, _, _ = model(noisy_imgs)
+                recon_in, _, _, _ = model(noisy_imgs)
                 total_mse_in += F.mse_loss(recon_in, imgs, reduction="sum").item()
 
                 # 2. Latent noise (pre-quantization)
                 z = model.encoder(imgs) # (B, D, 1)
                 z_noisy = z + torch.randn_like(z) * sigma
                 bw = model.target_bandwidths[-1]
-                quantized_pre, _, _, _ = model.quantizer(z_noisy, model.frame_rate, bw, nq=model.n_q, validation=False)
+                quantized_pre, _, _, _, _ = model.quantizer(z_noisy, model.frame_rate, bw, nq=model.n_q, validation=False)
                 recon_pre = model.decoder(quantized_pre)
                 total_mse_pre += F.mse_loss(recon_pre, imgs, reduction="sum").item()
 
                 # 3. Latent noise (post-quantization)
-                quantized_post, _, _, _ = model.quantizer(z, model.frame_rate, bw, nq=model.n_q, validation=False)
+                quantized_post, _, _, _, _ = model.quantizer(z, model.frame_rate, bw, nq=model.n_q, validation=False)
                 quantized_post_noisy = quantized_post + torch.randn_like(quantized_post) * sigma
                 recon_post = model.decoder(quantized_post_noisy)
                 total_mse_post += F.mse_loss(recon_post, imgs, reduction="sum").item()
@@ -160,7 +177,7 @@ def generate_and_evaluate(model, config, val_loader, args, device, output_dir):
     with torch.no_grad():
         for imgs, _ in tqdm(val_loader, desc="Extracting codes", leave=False):
             imgs = imgs.to(device)
-            _, _, codes, _ = model(imgs, validation=True) 
+            _, _, codes, _ = model(imgs)
             # codes: (n_q, B, N) where N=1 for MNIST
             for q in range(config.n_q):
                 q_codes = codes[q].flatten()
@@ -239,6 +256,144 @@ def generate_and_evaluate(model, config, val_loader, args, device, output_dir):
     else:
         print("Skipping FID and IS calculation: 'torchmetrics' is not installed.")
         print("To compute metrics, please run: pip install torchmetrics")
+
+def train_and_generate_rq_transformer(model, config, train_loader, args, device, output_dir):
+    """Train an RQ-Transformer prior on frozen RQ-VAE codes, then generate samples."""
+    from mnist_vqvae import RQTransformer, _count_params
+
+    print("=" * 60)
+    print("Stage 2: RQ-Transformer (Lee et al. CVPR 2022)")
+    print("=" * 60)
+
+    # Determine spatial sequence length
+    dataset = getattr(config, "dataset", args.dataset)
+    if dataset == "mnist":
+        T = 1
+    elif dataset == "emnist":
+        T = 4
+    elif dataset == "cifar100":
+        T = 16
+    else:
+        T = 1
+
+    n_q = config.n_q
+    bins = config.bins
+
+    rq_model = RQTransformer(
+        n_positions=T,
+        n_depths=n_q,
+        codebook_size=bins,
+        embed_dim=args.rq_transformer_dim,
+        n_spatial_layers=args.rq_transformer_layers,
+        n_depth_layers=args.rq_transformer_layers,
+        n_heads=args.rq_transformer_heads,
+    ).to(device)
+
+    total_p, trainable_p = _count_params(rq_model)
+    print(f"RQ-Transformer params — total: {total_p:,}  trainable: {trainable_p:,}")
+    print(f"  n_positions={T}, n_depths={n_q}, codebook_size={bins}")
+
+    rq_optimizer = torch.optim.AdamW(rq_model.parameters(), lr=args.rq_transformer_lr)
+    rq_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(rq_optimizer, T_max=args.rq_transformer_epochs)
+
+    best_rq_loss = float("inf")
+    for rq_epoch in tqdm(range(1, args.rq_transformer_epochs + 1), desc="RQ-Transformer"):
+        rq_model.train()
+        epoch_loss, epoch_n = 0.0, 0
+
+        for imgs, _ in train_loader:
+            imgs = imgs.to(device)
+            with torch.no_grad():
+                codes = model.encode(imgs)  # (n_q, B, N)
+
+            # Reshape to (B, T, D) where T=N spatial positions, D=n_q depths
+            codes = codes.permute(1, 2, 0)  # (B, N, n_q) = (B, T, D)
+
+            logits = rq_model(codes)  # (B, T, D, K)
+            loss = F.cross_entropy(logits.reshape(-1, bins), codes.reshape(-1))
+
+            rq_optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(rq_model.parameters(), 1.0)
+            rq_optimizer.step()
+
+            epoch_loss += loss.item()
+            epoch_n += 1
+
+        rq_scheduler.step()
+        avg_loss = epoch_loss / epoch_n
+
+        if rq_epoch % 10 == 0 or rq_epoch == 1:
+            print(f"  Epoch {rq_epoch}: loss={avg_loss:.4f}")
+
+        if avg_loss < best_rq_loss:
+            best_rq_loss = avg_loss
+            torch.save(rq_model.state_dict(), os.path.join(output_dir, "rq_transformer_best.pth"))
+
+    torch.save(rq_model.state_dict(), os.path.join(output_dir, "rq_transformer_latest.pth"))
+    print(f"RQ-Transformer training done. Best loss: {best_rq_loss:.4f}")
+
+    # Generate samples
+    print(f"Generating {args.num_samples} samples...")
+    rq_model.eval()
+    rq_model.load_state_dict(torch.load(os.path.join(output_dir, "rq_transformer_best.pth"), map_location=device))
+
+    generated_images = []
+    remaining = args.num_samples
+    with torch.no_grad():
+        while remaining > 0:
+            batch_n = min(remaining, args.batch_size)
+            sampled_codes = rq_model.generate(
+                n_samples=batch_n, device=device,
+                temperature=args.rq_temperature, top_k=args.rq_top_k,
+            )  # (B, T, D)
+            # Reshape to (n_q, B, N) for decoder
+            sampled_codes = sampled_codes.permute(2, 0, 1)  # (D, B, T) = (n_q, B, N)
+            batch_imgs = model.decode(sampled_codes)
+            generated_images.append(batch_imgs.cpu())
+            remaining -= batch_n
+
+    generated_images = torch.cat(generated_images, dim=0)
+
+    # Save grid
+    grid_path = os.path.join(output_dir, "rq_transformer_samples.png")
+    save_image(generated_images[:64].clamp(0, 1), grid_path, nrow=8)
+    print(f"Saved RQ-Transformer generated samples to {grid_path}")
+
+    # FID/IS if available
+    if HAS_TORCHMETRICS:
+        print("Computing FID/IS for RQ-Transformer samples...")
+        real_images = []
+        with torch.no_grad():
+            for imgs, _ in tqdm(train_loader, desc="Collecting real images", leave=False):
+                real_images.append(imgs)
+                if len(real_images) * args.batch_size >= args.num_samples:
+                    break
+        real_images = torch.cat(real_images, dim=0)[:args.num_samples]
+
+        def prepare_for_inception(imgs):
+            if imgs.size(1) == 1:
+                imgs = imgs.repeat(1, 3, 1, 1)
+            imgs = torch.clamp(imgs, 0, 1)
+            return (imgs * 255).to(torch.uint8)
+
+        real_prepared = prepare_for_inception(real_images)
+        gen_prepared = prepare_for_inception(generated_images[:args.num_samples])
+
+        try:
+            fid = FrechetInceptionDistance(feature=2048, normalize=False)
+            fid.update(real_prepared, real=True)
+            fid.update(gen_prepared, real=False)
+            fid_score = fid.compute().item()
+            print(f"RQ-Transformer FID: {fid_score:.4f}")
+
+            inception = InceptionScore(normalize=False)
+            inception.update(gen_prepared)
+            is_mean, is_std = inception.compute()
+            print(f"RQ-Transformer IS: {is_mean.item():.4f} ± {is_std.item():.4f}")
+        except Exception as e:
+            print(f"Failed to compute FID/IS: {e}")
+
 
 def evaluate_latent_interpretability(model, config, train_loader, val_loader, device, output_dir):
     print("Evaluating latent interpretability (training a 2-layer perceptron)...")
@@ -356,10 +511,13 @@ def main():
     val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
     
     model, config = load_model(args, device)
-    
-    evaluate_robustness(model, val_loader, device, output_dir)
-    generate_and_evaluate(model, config, val_loader, args, device, output_dir)
-    evaluate_latent_interpretability(model, config, train_loader, val_loader, device, output_dir)
+
+    if args.rq_transformer:
+        train_and_generate_rq_transformer(model, config, train_loader, args, device, output_dir)
+    else:
+        evaluate_robustness(model, val_loader, device, output_dir)
+        generate_and_evaluate(model, config, val_loader, args, device, output_dir)
+        evaluate_latent_interpretability(model, config, train_loader, val_loader, device, output_dir)
 
 if __name__ == "__main__":
     main()

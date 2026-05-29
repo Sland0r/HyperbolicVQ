@@ -266,6 +266,11 @@ def get_args():
         default=0.0,
         help='entailment_cone_weight for codebook (default: 0.0)')
     parser.add_argument(
+        '--gyration_weight',
+        type=float,
+        default=0.0,
+        help='gyration penalty weight: penalizes sin(angle) between code and residual to minimize gyration rotation (default: 0.0)')
+    parser.add_argument(
         '--LAMBDA_SEP',
         type=float,
         default=0.0,
@@ -302,6 +307,15 @@ def get_args():
         '--parallel_transport',
         action='store_true',
         help='Use pure differential geometry approach with parallel transport')
+    parser.add_argument(
+        '--new_method', action=argparse.BooleanOptionalAction, default=True,
+        help='Use left-subtraction encoding with right-associative decoding (default: True)')
+    parser.add_argument(
+        '--approx', action='store_true',
+        help='Track hyperbolic approximation distance (quantized+residual vs input)')
+    parser.add_argument(
+        '--hste', action='store_true',
+        help='Use hyperbolic straight-through estimator instead of Euclidean STE')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -357,11 +371,11 @@ def main_worker(local_rank, args):
                               uniform=args.uniform, threshold_ema_dead_code=args.threshold_ema_dead_code,
                               codebook_weight=args.codebook_weight, commitment_weight=args.commitment_weight,
                               dot_product_weight=args.dot_product_weight, entailment_cone_weight=args.entailment_cone_weight,
+                              gyration_weight=args.gyration_weight,
                               ratios=args.ratios, decay=args.decay,
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
-                              codebook_dim=args.codebook_dim, solution=args.solution, gyration=args.gyration,
-                              parallel_transport=args.parallel_transport)
+                              codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -399,7 +413,7 @@ def main_worker(local_rank, args):
         )
 
         # Skip root (index 0, at origin); keep the bins children
-        code_points = embeddings[1:].to(dtype=torch.float32)  # (bins, D)
+        code_points = embeddings[1:].to(dtype=torch.float32) / _n_q  # (bins, D)
         assert code_points.shape == (_bins, _D), \
             f"Expected ({_bins}, {_D}), got {code_points.shape}"
 
@@ -601,6 +615,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
     history = {
         "train_rec": [], "train_g": [], "train_d": [], "train_com": [], "train_feat": [],
         "val_rec": [], "val_g": [], "val_d": [], "val_com": [], "val_feat": [],
+        "train_dist": [], "val_dist": [],
     }
     epochs = range(args.st_epoch, args.N_EPOCHS + 1)
     for epoch in tqdm(epochs, desc='epoch'):
@@ -615,6 +630,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
         train_loss_g = 0.0
         train_commit_loss = 0.0
         train_sep_sum = 0.0
+        train_dist_sum = 0.0
         grad_norms_g = []
         grad_norms_d = []
         k_iter = 0
@@ -634,7 +650,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             global_step += 1  # record the global step
             for optimizer_idx in [0, 1]:  # we have two optimizer
                 x_wav = get_input(x)
-                G_x, commit_loss, last_layer, codes = soundstream(x_wav)
+                G_x, commit_loss, last_layer, codes, distance = soundstream(x_wav)
                 if optimizer_idx == 0:
                     with torch.no_grad():
                         if train_codes_hist is None:
@@ -699,6 +715,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                     train_adv_g_loss += adv_g_loss.item()
                     train_feat_loss += feat_loss.item()
                     train_rec_loss += rec_loss.item()
+                    train_dist_sum += distance.item()
 
                     # ── Codebook separation loss ──────────────────────────
                     sep_loss_val = 0.0
@@ -845,7 +862,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             # For tracking perplexity / usage of codebooks
             codes_hist = None
             total_valid_codes = 0
-            all_val_dots = []
+            valid_dist_sum = 0.0
+            valid_dist_n = 0
             
             if args.distributed:
                 valid_loader.sampler.set_epoch(epoch)
@@ -855,9 +873,10 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 for optimizer_idx in [0, 1]:
                     x_wav = get_input(x)
                     # G_x is the reconstructed waveform, codes is the indices
-                    G_x, commit_loss, last_layer, codes, dot_vec = soundstream(x_wav, validation=True)
+                    G_x, commit_loss, last_layer, codes, distance = soundstream(x_wav, validation=True)
                     if optimizer_idx == 0:
-                        all_val_dots.append(dot_vec.cpu())
+                        valid_dist_sum += distance.item()
+                        valid_dist_n += 1
                         # Tracking Codebook Perplexity
                         # codes shape: [num_quantizers, batch, time]
                         if codes_hist is None:
@@ -919,34 +938,10 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                                              fmap_s_r, fmap_s_g)
                         valid_loss_d += loss_d.item()
                         
-            # Calculate validation dot product metrics
-            if len(all_val_dots) > 0:
-                max_nq = max(v.shape[0] for v in all_val_dots)
-                
-                sum_dots = torch.zeros(max_nq, device=args.device)
-                count_dots = torch.zeros(max_nq, device=args.device)
-                pos_dots = torch.zeros(max_nq, device=args.device)
-                neg_dots = torch.zeros(max_nq, device=args.device)
-                
-                for v in all_val_dots:
-                    nq, num_elements = v.shape
-                    v = v.to(args.device)
-                    sum_dots[:nq] += v.sum(dim=1)
-                    count_dots[:nq] += num_elements
-                    pos_dots[:nq] += (v > 0).float().sum(dim=1)
-                    neg_dots[:nq] += (v < 0).float().sum(dim=1)
-                
-                avg_val_dots = sum_dots / count_dots.clamp_min(1.0)
-                pos_perc = pos_dots / count_dots.clamp_min(1.0) * 100
-                neg_perc = neg_dots / count_dots.clamp_min(1.0) * 100
-                
-                avg_dots_str = ", ".join([f"{v:.4f}" for v in avg_val_dots])
-                pos_perc_str = ", ".join([f"{v:.1f}%" for v in pos_perc])
-                neg_perc_str = ", ".join([f"{v:.1f}%" for v in neg_perc])
-                
-                logger.log_info(f"  [Epoch {epoch}] Validation Avg Dot Products: [{avg_dots_str}]")
-                logger.log_info(f"  [Epoch {epoch}] Validation Dot Products > 0: [{pos_perc_str}]")
-                logger.log_info(f"  [Epoch {epoch}] Validation Dot Products < 0: [{neg_perc_str}]")
+            avg_val_dist = valid_dist_sum / max(valid_dist_n, 1)
+            avg_train_dist = train_dist_sum / len(train_loader)
+            if args.approx:
+                logger.log_info(f"  [Epoch {epoch}] Approx distance — train: {avg_train_dist:.6f}  val: {avg_val_dist:.6f}")
 
             # Calculate perplexity: 2^{H(p)}
             perplexities = []
@@ -980,6 +975,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             history["val_d"].append(avg_val_d)
             history["val_com"].append(avg_val_com)
             history["val_feat"].append(avg_val_feat)
+            history["train_dist"].append(avg_train_dist)
+            history["val_dist"].append(avg_val_dist)
 
             # Only save checkpoints after reaching 75% of total epochs
             threshold_epoch = int(0.75 * args.N_EPOCHS)
@@ -1018,6 +1015,11 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 avg_val_com,
                 avg_val_d, ppl_str, best_val_epoch)
             logger.log_info(message)
+
+    # ── End-of-training summary ──
+    if not args.distributed or dist.get_rank() == 0:
+        logger.log_info(f"\n  Last model  (epoch {epoch}):  val_rec={avg_val_rec:.5f}  "
+              f"val_com={avg_val_com:.5f}  val_approx_dist={avg_val_dist:.5f}")
 
     # ── End-of-training: codebook GIF + loss curves (rank 0 only) ──
     if not args.distributed or dist.get_rank() == 0:
@@ -1069,6 +1071,20 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
             plt.close(fig)
             print(f"Loss curves saved to: {loss_fig_path}")
 
+            if args.approx and any(d != 0.0 for d in history["train_dist"]):
+                fig_dist, ax_dist = plt.subplots(figsize=(8, 5))
+                ax_dist.plot(epochs_range, history["train_dist"], label="Train")
+                ax_dist.plot(epochs_range, history["val_dist"], label="Val")
+                ax_dist.set_title("Hyperbolic Approximation Distance")
+                ax_dist.set_xlabel("Epoch")
+                ax_dist.set_ylabel("Mean Hyperbolic Distance²")
+                ax_dist.legend()
+                ax_dist.grid(True)
+                fig_dist.tight_layout()
+                dist_fig_path = os.path.join(args.PATH, "approx_distance.png")
+                fig_dist.savefig(dist_fig_path, dpi=150)
+                plt.close(fig_dist)
+                print(f"Approx distance curve saved to: {dist_fig_path}")
 
 
 if __name__ == '__main__':

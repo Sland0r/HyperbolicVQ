@@ -82,11 +82,7 @@ python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --warmup_epochs_g ${WARMUP_EPOCHS_G} \
         --uniform \
         --constructive \
-        #--gyration \                           # solution, parallel_transport, gyration
-        #--pre_quant_batchnorm \
-        #--use_spec_augment \
-        #--ema \
-        #--kmeans_init \
+        --new_method \                          # solution, parallel_transport, gyration
 
 # Extract PPLs from the generated log file automatically
 python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/extract_ppls.py logs/${NAME}_${SLURM_JOB_ID}.out

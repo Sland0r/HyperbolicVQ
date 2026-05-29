@@ -8,4 +8,4 @@
 
 
 cd /home/acolombo/VAEs
-python3 extract_rec_loss.py --folder cifar_vqvae
+python3 extract_rec_loss.py --folder cifar100_vqvae

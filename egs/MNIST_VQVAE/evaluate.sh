@@ -5,7 +5,7 @@
 #SBATCH --job-name=evaluate_mnist_vqvae
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=00:30:00
+#SBATCH --time=01:30:00
 #SBATCH --output=evaluations/evaluate_%A.out
 
 module purge
@@ -13,7 +13,7 @@ module load 2025
 module load Anaconda3/2025.06-1
 source activate vaes
 
-CHECKPOINTS_DIR="/home/acolombo/VAEs/checkpoint/mnist_new"
+CHECKPOINTS_DIR="/home/acolombo/VAEs/checkpoint/mnist_vqvae/"
 
 for model_dir in "$CHECKPOINTS_DIR"/*/; do
     model_dir=${model_dir%/}
@@ -30,8 +30,11 @@ for model_dir in "$CHECKPOINTS_DIR"/*/; do
     best_file=$(basename "$latest_best")
     echo "Evaluating $model_name using $best_file"
     
+    dataset=$(python3 -c "import sys; sys.path.insert(0,'$model_dir'); import config; print(config.dataset)")
+    echo "  dataset=$dataset"
+
     python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/evaluate.py \
         --checkpoint "$CHECKPOINTS_DIR/$model_name/$best_file" \
-        --dataset mnist \
+        --dataset "$dataset" \
         --num_samples 100
 done

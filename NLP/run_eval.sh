@@ -15,22 +15,22 @@ source activate vaes
 
 export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
-# TRAINING
-C=1.0
+MODEL=new_hste
 EPOCHS=10
 BATCH_SIZE=512
 
-echo "Starting NLP evaluation for RQ..."
+echo "Starting NLP evaluation..."
 
 echo "=========================================="
-echo "Running evaluation for C=${C}"
+echo "Running evaluation for model: ${MODEL}"
 echo "============================================"
 
 python3 -u /home/acolombo/VAEs/NLP/eval_recall.py \
-    --c ${C} \
-    --model_path /home/acolombo/VAEs/checkpoint/nlp/hrq_model_c${C}_ep10.pt \
-    --teacher_forcing \
+    --model_path ${MODEL} \
     --epochs ${EPOCHS} \
-    --batch_size ${BATCH_SIZE}
+    --batch_size ${BATCH_SIZE} \
+    --beam_search \
+    # --teacher_forcing \
+    # --beam_search
     
 echo "Done!"
