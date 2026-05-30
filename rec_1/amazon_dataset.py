@@ -115,15 +115,27 @@ def prepare_data(min_history_len=5, seq_len=20):
     }
     print(f"Split: {len(train_sequences)} train, {len(val_sequences)} val, {len(test_sequences)} test sequences over {len(item_catalog)} items.")
     
-    print("Computing item embeddings using all-mpnet-base-v2...")
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer('all-mpnet-base-v2')
-    texts = [item_texts[item] for item in item_catalog]
-    embeddings = model.encode(texts, batch_size=256, show_progress_bar=True, convert_to_tensor=True)
-    
-    # Save the continuous embeddings
-    torch.save(embeddings.cpu(), EMBEDDINGS_FILE)
-    print(f"Saved embeddings to {EMBEDDINGS_FILE}")
+    # Item embeddings depend only on the item catalog/text, not on the
+    # train/val/test split, so reuse the cache whenever it matches the catalog.
+    cached_embeddings = None
+    if os.path.exists(EMBEDDINGS_FILE):
+        cached = torch.load(EMBEDDINGS_FILE)
+        if cached.shape[0] == len(item_catalog):
+            print(f"Loading cached item embeddings from {EMBEDDINGS_FILE} (skipping MPNet).")
+            cached_embeddings = cached
+        else:
+            print(f"Cached embeddings ({cached.shape[0]}) don't match catalog ({len(item_catalog)}); recomputing.")
+
+    if cached_embeddings is None:
+        print("Computing item embeddings using all-mpnet-base-v2...")
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer('all-mpnet-base-v2')
+        texts = [item_texts[item] for item in item_catalog]
+        embeddings = model.encode(texts, batch_size=256, show_progress_bar=True, convert_to_tensor=True)
+
+        # Save the continuous embeddings
+        torch.save(embeddings.cpu(), EMBEDDINGS_FILE)
+        print(f"Saved embeddings to {EMBEDDINGS_FILE}")
     
     data = {
         'user_histories': user_histories_idx,

@@ -25,18 +25,20 @@ mkdir -p ${SAVE_DIR}
 echo "Starting Hierarchy Discovery Experiments..."
 
 python3 rec_1/train_vae.py \
-    --c 0.0 \
-    --epochs 500 \
+    --c 1.0 \
+    --epochs 5000 \
     --embed_dim 32 \
-    --bins 256 \
-    --lr 3e-4 \
-    --batch_size 512 \
+    --bins 128 \
+    --lr 1e-4 \
+    --batch_size 2048 \
     --save_dir ${SAVE_DIR} \
-    #--approx
+    --quant 0.01 \
+    --recon 1000 \
+    --approx
 python3 rec_1/train_recommender.py \
-    --c 0.0 \
+    --c 1.0 \
     --epochs 100 \
     --lr 1e-4 \
-    --warmup_epochs 5
+    --warmup_epochs 0
 
 echo "Done!"

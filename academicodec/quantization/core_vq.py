@@ -61,6 +61,45 @@ def parallel_transport(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: flo
     return v * ratio
 
 
+def parallel_transport_1(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: float) -> torch.Tensor:
+    """Exact parallel transport of tangent vector v from base point x to y.
+
+    On the Poincaré ball the parallel transport along the geodesic from x to y is
+
+        PT_{x->y}(v) = (λ_c^x / λ_c^y) · gyr[y, ⊖x] v
+
+    where ⊖x = -x, λ is the conformal factor and gyr is the gyration operator.
+    Unlike ``parallel_transport`` (a magnitude-only conformal rescale), this is a
+    true isometry of the tangent spaces: it preserves the Riemannian norm
+    λ_c^x ||v|| and rotates the vector via gyration.
+
+    The gyration is evaluated with the simplified closed form (matching geoopt's
+    ``_gyration`` under the sign map k = -c, since our Möbius denominator is
+    1 + 2c<u,v> + c²||u||²||v||²). The Möbius-based ``gyration`` helper is *not*
+    reused here: it composes several ``mobius_add`` calls whose ``clamp_min``
+    corrupts the result when a base point sits near the ball boundary or when v
+    is a large tangent vector (||v|| outside the ball) — exactly the regime the
+    STE backward pass hits. This closed form is a single clamped division and
+    stays an exact isometry there. Needs no geoopt internals.
+    """
+    u, w = y, v  # PT uses gyr[y, ⊖x] v  ->  gyration base points (u=y, ⊖x), acting on w=v
+    u2 = u.pow(2).sum(dim=-1, keepdim=True)
+    v2 = x.pow(2).sum(dim=-1, keepdim=True)            # ||⊖x||² = ||x||²
+    uv = -(u * x).sum(dim=-1, keepdim=True)            # <y, ⊖x>
+    uw = (u * w).sum(dim=-1, keepdim=True)             # <y, v>
+    vw = -(x * w).sum(dim=-1, keepdim=True)            # <⊖x, v>
+    c2 = c * c
+    a = -c2 * uw * v2 + c * vw + 2 * c2 * uv * vw
+    b = -c2 * vw * u2 - c * uw
+    d = (1 + 2 * c * uv + c2 * u2 * v2).clamp_min(1e-15)
+    gyr = w + 2 * (a * u + b * (-x)) / d
+
+    lam_x = conformal_factor(x, c)
+    lam_y = conformal_factor(y, c)
+    ratio = (lam_x / lam_y).clamp(min=1e-6)
+    return ratio * gyr
+
+
 import sys
 sys.path.insert(0, '/home/acolombo/music')
 from hyp_modules import HyperbolicEntailmentConeLoss
@@ -161,6 +200,18 @@ def conformal_factor(x, c):
     x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
     return 2.0 / (1.0 - c * x2)
 
+
+
+def gyration(u, v, w, c):
+    """
+    Computes gyr[u, v]w = -(u ⊕_c v) ⊕_c (u ⊕_c (v ⊕_c w))
+    """
+    u_plus_v = mobius_add(u, v, c)
+    v_plus_w = mobius_add(v, w, c)
+    u_plus_v_plus_w = mobius_add(u, v_plus_w, c)
+    return mobius_add(-u_plus_v, u_plus_v_plus_w, c)
+
+
 def weighted_midpoint_op(x, w, c):
     """Weighted midpoint operation [x, w]_c (Eq. 43).
     [x, w]_c = w * λ_c^x * x / (1 + sqrt(1 + c * w^2 * (λ_c^x)^2 * ||x||^2))
@@ -218,8 +269,8 @@ class HyperbolicSTE(torch.autograd.Function):
         lambda_x_ = 2 / (1 - c * x2)
         # Euclidean -> Riemannian
         grad_r = grad_output / (lambda_q ** 2)
-        # transport tangent vector
-        grad_r_at_x = parallel_transport(
+        # transport tangent vector (exact Poincaré-ball PT, an isometry)
+        grad_r_at_x = parallel_transport_1(
             q, x,
             grad_r,
             c
@@ -614,17 +665,6 @@ class VectorQuantization(nn.Module):
                 loss = loss + codebook_loss * self.codebook_weight
 
         return quantize, embed_ind, loss
-
-
-def gyration(u, v, w, c):
-    """
-    Computes gyr[u, v]w = -(u ⊕_c v) ⊕_c (u ⊕_c (v ⊕_c w))
-    """
-    u_plus_v = mobius_add(u, v, c)
-    v_plus_w = mobius_add(v, w, c)
-    u_plus_v_plus_w = mobius_add(u, v_plus_w, c)
-    return mobius_add(-u_plus_v, u_plus_v_plus_w, c)
-
 
 class ResidualVectorQuantization(nn.Module):
     """Residual vector quantization implementation.

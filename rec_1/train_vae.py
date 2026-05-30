@@ -129,15 +129,16 @@ def train(args):
 
             recon, quantized, codes, penalty, distance = model(x)
             recon_loss = nn.functional.mse_loss(recon, x)
-            commit = penalty.mean()
-            loss = recon_loss + commit
+            recon_term = recon_loss * args.recon
+            commit = penalty.mean() * args.quant
+            loss = recon_term + commit
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.item()
-            total_recon += recon_loss.item()
+            total_recon += recon_term.item()
             total_commit += commit.item()
             total_dist += distance.item()
 
@@ -299,6 +300,10 @@ if __name__ == "__main__":
                         help='Track hyperbolic approximation distance (quantized+residual vs input)')
     parser.add_argument("--hste", action='store_true',
                         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
+    parser.add_argument("--quant", type=float, default=1.0,
+                        help='Multiplier for the quantizer penalty term')
+    parser.add_argument("--recon", type=float, default=1.0,
+                        help='Multiplier for the reconstruction loss term')
     parser.add_argument("--save_dir", type=str, default="checkpoint/rec_1/default")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()

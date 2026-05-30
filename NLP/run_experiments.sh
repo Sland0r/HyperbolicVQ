@@ -5,7 +5,7 @@
 #SBATCH --job-name=nlp_hrq
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 #SBATCH --output=logs_nlp/nlp_hrq_%A.out
 
 module purge
@@ -17,10 +17,10 @@ export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 
 # Paper (Appendix C.1) hyperparameters
 BATCH_SIZE=1024
-EPOCHS=50
+EPOCHS=1500
 LEARNING_RATE=1.0
 WARMUP_LR=0.01
-WARMUP_EPOCHS=0
+WARMUP_EPOCHS=20
 C=1.0
 
 # MODEL
@@ -66,6 +66,7 @@ echo "2. Evaluate Models"
 
 python3 -u /home/acolombo/VAEs/NLP/eval_recall.py \
     --model_path ${SLURM_JOB_ID} \
+    --epochs 100 \
     # --teacher_forcing \
     # --beam_search \
 
