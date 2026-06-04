@@ -102,6 +102,9 @@ def get_args():
     parser.add_argument(
         '--hste', action='store_true',
         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
+    parser.add_argument(
+        '--gradient_correction', action='store_true',
+        help='Detach the residual after each quantization step (gradient correction)')
     # args for training
     parser.add_argument(
         '--N_EPOCHS', type=int, default=50,
@@ -248,6 +251,7 @@ def main():
         new_method=args.new_method,
         approx=args.approx,
         hste=args.hste,
+        gradient_correction=args.gradient_correction,
     ).to(device)
     logger.log_info(model)
     total, trainable = _count_params(model)
@@ -264,18 +268,24 @@ def main():
         hierarchy = load_hierarchy(dataset="n_h_trees", hierarchy_name=f"{args.bins}_1")
 
         curvature = args.c if args.c > 0 else 1.0
-        embeddings, _, _ = constructively_embed_tree(
-            hierarchy=hierarchy,
-            dataset="n_h_trees",
-            hierarchy_name=f"{args.bins}_1",
-            embedding_dim=args.D,
-            tau=1.0,
-            nc=1,
-            curvature=curvature,
-            root=0,
-            gen_type="optim",
-            dtype=torch.float64,
-        )
+        try:
+            embeddings, _, _ = constructively_embed_tree(
+                hierarchy=hierarchy,
+                dataset="n_h_trees",
+                hierarchy_name=f"{args.bins}_1",
+                embedding_dim=args.D,
+                tau=1.0,
+                nc=1,
+                curvature=curvature,
+                root=0,
+                gen_type="optim",
+                dtype=torch.float64,
+            )
+        finally:
+            # The sphere-point optimiser inside constructively_embed_tree flips on
+            # torch.autograd.set_detect_anomaly(True) globally and never resets it,
+            # which makes every later training backward pass crawl. Force it off.
+            torch.autograd.set_detect_anomaly(False)
 
         # Skip root (index 0, at origin); keep the bins children
         code_points = embeddings[1:].to(dtype=torch.float32, device=device) / args.n_q  # (bins, D)

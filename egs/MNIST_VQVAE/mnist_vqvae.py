@@ -141,6 +141,7 @@ class VQVAE2D(nn.Module):
         new_method: bool = True,
         approx: bool = False,
         hste: bool = False,
+        gradient_correction: bool = False,
     ):
         super().__init__()
         self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size, size=size)
@@ -160,6 +161,7 @@ class VQVAE2D(nn.Module):
             new_method=new_method,
             approx=approx,
             hste=hste,
+            gradient_correction=gradient_correction,
         )
         self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size)
         self.exponential_lambda = exponential_lambda

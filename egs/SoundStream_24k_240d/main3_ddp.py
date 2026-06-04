@@ -316,6 +316,9 @@ def get_args():
     parser.add_argument(
         '--hste', action='store_true',
         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
+    parser.add_argument(
+        '--gradient_correction', action='store_true',
+        help='Detach the residual after each quantization step (gradient correction)')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -375,7 +378,8 @@ def main_worker(local_rank, args):
                               ratios=args.ratios, decay=args.decay,
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
-                              codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste)
+                              codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste,
+                              gradient_correction=args.gradient_correction)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -399,18 +403,24 @@ def main_worker(local_rank, args):
         hierarchy = load_hierarchy(dataset="n_h_trees", hierarchy_name=f"{_bins}_1")
 
         curvature = args.c if args.c > 0 else 1.0
-        embeddings, _, _ = constructively_embed_tree(
-            hierarchy=hierarchy,
-            dataset="n_h_trees",
-            hierarchy_name=f"{_bins}_1",
-            embedding_dim=_D,
-            tau=1.0,
-            nc=1,
-            curvature=curvature,
-            root=0,
-            gen_type="optim",
-            dtype=torch.float32,
-        )
+        try:
+            embeddings, _, _ = constructively_embed_tree(
+                hierarchy=hierarchy,
+                dataset="n_h_trees",
+                hierarchy_name=f"{_bins}_1",
+                embedding_dim=_D,
+                tau=1.0,
+                nc=1,
+                curvature=curvature,
+                root=0,
+                gen_type="optim",
+                dtype=torch.float32,
+            )
+        finally:
+            # The sphere-point optimiser inside constructively_embed_tree flips on
+            # torch.autograd.set_detect_anomaly(True) globally and never resets it,
+            # which makes every later training backward pass crawl. Force it off.
+            torch.autograd.set_detect_anomaly(False)
 
         # Skip root (index 0, at origin); keep the bins children
         code_points = embeddings[1:].to(dtype=torch.float32) / _n_q  # (bins, D)

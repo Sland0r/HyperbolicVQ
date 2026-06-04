@@ -1,0 +1,292 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb, geometry}
+\geometry{a4paper, margin=1in}
+
+\begin{document}
+
+\section*{Methods: Numerically Stable Exact Gyration for Hyperbolic Straight-Through Estimators}
+
+In the context of Hyperbolic Vector Quantization, applying the Straight-Through Estimator (HSTE) requires parallel transporting the gradient from the quantized codebook vector to the continuous residual. Let $x$ be the continuous target point (base) and $y$ be the quantized codebook vector. Parallel transport in the Poincaré ball involves the gyration operator $\text{gyr}[y, -x] v$, where $v$ is the tangent vector to be transported.
+
+The exact, closed-form computation of the gyration operator $\text{gyr}[A, B]v$ with base points $A = y$ and $B = -x$ takes the form:
+\begin{equation}
+    \text{gyr}[A, B]v = v + 2 \frac{a A + b B}{d}
+\end{equation}
+where $c$ is the hyperbolic curvature, and the scalar coefficients are given by:
+\begin{align}
+    a &= -c^2 \langle A, v \rangle ||B||^2 + c \langle B, v \rangle + 2 c^2 \langle A, B \rangle \langle B, v \rangle \\
+    b &= -c^2 \langle B, v \rangle ||A||^2 - c \langle A, v \rangle \\
+    d &= 1 + 2 c \langle A, B \rangle + c^2 ||A||^2 ||B||^2
+\end{align}
+
+\subsection*{The Catastrophic Cancellation Problem}
+Because $y$ is the quantized projection of $x$, the two vectors are extremely close: $y = x + \delta$, where $||\delta||$ is the quantization error. As a consequence, $A \approx -B$.
+
+This proximity exposes two severe sources of catastrophic numerical cancellation:
+\begin{enumerate}
+    \item \textbf{The Denominator:} Substituting $A \approx -B$ yields $d \approx (1 - c ||x||^2)^2$. As embeddings learn and migrate towards the boundary of the Poincaré ball, $1 - c||x||^2 \to 0$. The exact formula computes $d$ by subtracting large magnitude numbers ($\approx 1$) to produce an infinitesimally small value (e.g., $10^{-10}$), completely obliterating floating-point precision.
+    \item \textbf{The Numerator:} Because $A \approx -B$, we find that $a \approx b$. Computing $a A + b B = a y - b x$ therefore subtracts two massive, nearly identical vectors. This results in a numerator vector consisting almost entirely of floating-point noise.
+\end{enumerate}
+Dividing the noisy numerator by the ill-conditioned denominator causes the gyration vector to explode uncontrollably, directly leading to gradient divergence during training.
+
+\subsection*{Algebraically Stabilized Formulation}
+To preserve the mathematical exactness of the isometry while eliminating numerical instability, we algebraically reformulate the closed-form gyration strictly in terms of the tiny difference vector $\delta = y - x$.
+
+\subsubsection*{Stabilized Denominator}
+Substituting $y = x + \delta$ directly into the denominator $d = 1 - 2 c \langle y, x \rangle + c^2 ||y||^2 ||x||^2$ and factoring the terms yields a mathematically equivalent representation:
+\begin{equation}
+    d_{stable} = (1 - c||x||^2)^2 - 2c(1 - c||x||^2)\langle x, \delta\rangle + c^2||x||^2 ||\delta||^2
+\end{equation}
+This formulation is robust because it computes $d$ by accumulating three strictly small terms of roughly equal magnitude. It bypasses the large-number subtraction entirely, preserving near-perfect numerical precision.
+
+\subsubsection*{Stabilized Numerator}
+Instead of calculating $a y - b x$ naively, we apply the algebraic identity:
+\begin{equation}
+    a y - b x = \frac{a+b}{2}\delta + \frac{a-b}{2}(y+x)
+\end{equation}
+The term $\frac{a+b}{2}$ evaluates stably since $a$ and $b$ share the same sign. However, $\frac{a-b}{2}$ normally masks catastrophic cancellation. To circumvent this, we expand $a$ and $b$ using $A = y = x + \delta$ and $B = -x$, and carefully group the terms. All $O(1)$ terms perfectly cancel analytically, leaving:
+\begin{align}
+    a - b &= -c^2 \langle y, v \rangle ||x||^2 - c \langle x, v \rangle + 2 c^2 \langle y, x \rangle \langle x, v \rangle - c^2 \langle x, v \rangle ||y||^2 + c \langle y, v \rangle \notag \\
+    &= c \langle \delta, v \rangle + c^2 \left( 2 \langle x+\delta, x \rangle \langle x, v \rangle - \langle x+\delta, v \rangle ||x||^2 - \langle x, v \rangle ||x+\delta||^2 \right) \notag \\
+    &= c (1 - c||x||^2) \langle \delta, v \rangle - c^2 \langle x, v \rangle ||\delta||^2
+\end{align}
+This result allows us to compute $a-b$ directly from the differential vector $\delta$, explicitly preventing the subtraction of closely matched large values.
+
+By substituting the stabilized components back into the original gyration operation:
+\begin{equation}
+    \text{gyr}[y, -x]v = v + \frac{(a+b)\delta + (a-b)(y+x)}{d_{stable}}
+\end{equation}
+We fully resolve the gradient explosion artifact without modifying the mathematical properties of the exact Hyperbolic Straight-Through Estimator, allowing for stable convergence at the edges of the Poincaré manifold.
+
+\section*{Methods: Restoring the Mathematical Firewall in Hyperbolic Residual Quantization}
+
+\subsection*{Step 1: The ``Perfect Firewall'' of Euclidean RVQ}
+To understand the problem in hyperbolic space, we first have to look at why standard Euclidean RVQ is stable. Let $x$ be the input (from the encoder). For the first layer:
+\begin{enumerate}
+    \item \textbf{Quantization (STE):} $q_1 = x + (c_1 - x)\text{.detach()}$. 
+    \begin{itemize}
+        \item In the forward pass, $q_1 = c_1$. 
+        \item In the backward pass, the straight-through estimator makes $\frac{\partial q_1}{\partial x} = I$ (the identity matrix).
+    \end{itemize}
+    \item \textbf{Residual:} $r_1 = x - q_1$
+    \item \textbf{Reconstruction Output:} $out = q_1 + q_2 + \dots$
+\end{enumerate}
+
+By the chain rule, the gradient of the loss $L$ with respect to $x$ comes from two paths: through $q_1$ and through $r_1$. Let's look at the gradient flowing through the residual branch $r_1$:
+\begin{equation}
+    \frac{\partial r_1}{\partial x} = \frac{\partial (x - q_1)}{\partial x} = I - \frac{\partial q_1}{\partial x} = I - I = 0
+\end{equation}
+Because $\frac{\partial r_1}{\partial x} = 0$, \textbf{no gradients flow from $r_1$ back to $x$}. This is a beautiful property: the residual connection acts as a mathematical firewall. $x$ receives exactly one clean copy of the gradient directly from $q_1$ (which holds the gradient of the total $out$ reconstruction). No matter how many layers you add, the gradient size to the encoder remains stable.
+
+\subsection*{Step 2: The Leakage in Hyperbolic Space}
+Now let's translate this to the Poincaré ball with HSTE and \texttt{new\_method}:
+\begin{enumerate}
+    \item \textbf{Quantization (HSTE):} The hyperbolic STE passes gradients from $q_1$ to $x$ using exact parallel transport. So, $\frac{\partial q_1}{\partial x} = PT_{q_1 \to x}$.
+    \item \textbf{Residual (\texttt{new\_method}):} $r_1 = (-q_1) \oplus_c x$
+\end{enumerate}
+
+Let's compute the backward pass of the residual branch $\frac{\partial r_1}{\partial x}$ using the chain rule on Möbius addition ($\oplus_c$):
+\begin{align}
+    \frac{\partial r_1}{\partial x} &= D_2 \oplus_c(-q_1, x) + D_1 \oplus_c(-q_1, x) \cdot \frac{\partial (-q_1)}{\partial x} \notag \\
+    &= D_2 \oplus_c(-q_1, x) - D_1 \oplus_c(-q_1, x) \circ PT_{q_1 \to x}
+\end{align}
+(Where $D_1 \oplus_c$ and $D_2 \oplus_c$ are the Jacobians of Möbius addition with respect to its first and second arguments).
+
+In Euclidean space, $D_1=I$, $D_2=I$, and $PT=I$, giving $I - I = 0$. But \textbf{in Hyperbolic space, Möbius addition is highly non-linear and non-commutative}. The differentials scale vectors by complex conformal factors and rotate them using gyration operators. Because $\lambda_x \neq \lambda_{q_1}$ in general:
+\begin{equation}
+    D_2 \oplus_c(-q_1, x) \neq D_1 \oplus_c(-q_1, x) \circ PT_{q_1 \to x}
+\end{equation}
+
+\subsection*{Step 3: The Destabilization}
+Because the terms do not perfectly cancel, $\frac{\partial r_1}{\partial x} \neq 0$. The mathematical firewall is broken. The residual branch now ``leaks'' gradients. 
+
+If we call this leak matrix $M = \frac{\partial r_1}{\partial x}$, the total gradient arriving at the encoder $x$ becomes:
+\begin{equation}
+    \nabla_x L = \nabla_{q_1} L \circ PT_{q_1 \to x} + M \cdot \nabla_{q_2} L + M^2 \cdot \nabla_{q_3} L + \dots
+\end{equation}
+Instead of receiving one clean gradient, the encoder receives a messy superposition of gradients from all deeper quantizers, all rotated and scaled by varying powers of $M$. This compounds exponentially with the depth of the RVQ, completely destabilizing the encoder's training.
+
+\subsection*{Step 4: The \texttt{.detach()} Fix}
+By explicitly writing \texttt{residual = residual.detach()}, we force PyTorch to treat $r_1$ as a constant with respect to $x$ during the backward pass. 
+
+We manually enforce $\frac{\partial r_1}{\partial x} := 0$, perfectly restoring the Euclidean ``firewall'':
+\begin{enumerate}
+    \item The encoder $x$ now receives exactly one mathematically sound Riemannian gradient: $\nabla_{q_1} L \circ PT_{q_1 \to x}$.
+    \item The deeper codebooks ($q_2$, $q_3$) still get updated properly, because their codebook loss and commit loss don't need to backpropagate through $r_1$ to reach their respective codebook embeddings.
+\end{enumerate}
+This change preserves the exact geometric properties of the forward pass while stabilizing the backward pass by mimicking the foundational gradient dynamics of standard RVQs.
+
+\section*{Methods: Gradient Routing in Residual Vector Quantization}
+
+A common point of confusion regarding the ``mathematical firewall'' (detaching the residual) is how the encoder ($x$) and the deeper quantizers ($q_i$) receive their training signals if the backward pass is blocked. If the residual is detached, does the encoder only learn from the first quantizer? And how do the deeper quantizers train? 
+
+To answer this, we must examine the gradient flow from the three distinct losses: the reconstruction loss ($L_{rec}$), the codebook loss ($L_{code}$), and the commitment loss ($L_{commit}$).
+
+\subsection*{1. How the Encoder ($x$) Receives the Reconstruction Signal}
+The total reconstruction output is a function of \textit{all} quantizers:
+\begin{equation}
+    out = q_1 \oplus_c (q_2 \oplus_c \dots \oplus_c q_N)
+\end{equation}
+When computing the gradient of the reconstruction loss $L_{rec}$ with respect to the first quantizer $q_1$, the chain rule dictates:
+\begin{equation}
+    \nabla_{q_1} L_{rec} = \nabla_{out} L_{rec} \cdot \frac{\partial out}{\partial q_1}
+\end{equation}
+Because $out$ is the \textit{fully-refined} output containing information from all $N$ quantizers, the gradient $\nabla_{q_1} L_{rec}$ is inherently aware of the deep quantizers' contributions. 
+
+When the Hyperbolic Straight-Through Estimator (HSTE) passes the gradient from $q_1$ back to the encoder $x$:
+\begin{equation}
+    \nabla_x L_{rec} = \nabla_{q_1} L_{rec} \circ PT_{q_1 \to x}
+\end{equation}
+the encoder $x$ receives a single, unified gradient that encapsulates the performance of the \textit{entire} quantizer cascade. 
+
+If we had \textbf{not} detached the residual branch, $x$ would receive a second copy of the gradient via $r_1$, a third copy via $r_2$, and so on. Detaching the residual does not hide the deep quantizers from the encoder; rather, it prevents the encoder from receiving redundant, exponentially compounding copies of the same reconstruction gradient.
+
+\subsection*{2. How the Deep Quantizers ($q_i$) Train}
+The deeper quantizers ($q_2, q_3, \dots$) must learn to represent the residuals. They receive their training signals from three sources:
+\begin{enumerate}
+    \item \textbf{Reconstruction Loss ($L_{rec}$):} Just as $out$ is differentiated with respect to $q_1$, it is also differentiated with respect to $q_2$:
+    \begin{equation}
+        \nabla_{q_2} L_{rec} = \nabla_{out} L_{rec} \cdot \frac{\partial out}{\partial q_2}
+    \end{equation}
+    This gradient flows directly into $q_2$, updating the deep codebook embeddings based on their contribution to the final reconstructed output. When $q_2$ passes this gradient back to $r_1$ via its STE, it hits the \texttt{.detach()} firewall and safely stops, preventing it from leaking back to $x$.
+    
+    \item \textbf{Codebook Loss ($L_{code}$):} To ensure the discrete codebook vectors align with the continuous residuals, each layer $i$ computes a codebook loss:
+    \begin{equation}
+        L_{code}^{(i)} = d_c^2(r_{i-1}\text{.detach()}, q_i)
+    \end{equation}
+    Because $r_{i-1}$ is explicitly detached in the loss formulation, this gradient flows exclusively into $q_i$, pulling the codebook towards the incoming residuals.
+    
+    \item \textbf{Commitment Loss ($L_{commit}$):} Conversely, to encourage the continuous representations to commit to the discrete codebook, each layer computes:
+    \begin{equation}
+        L_{commit}^{(i)} = d_c^2(q_i\text{.detach()}, r_{i-1})
+    \end{equation}
+    This gradient flows back into $r_{i-1}$. For the first layer ($i=1$), $r_0 = x$, so the encoder $x$ directly receives the commitment gradient. For deeper layers ($i > 1$), the gradient flows into $r_{i-1}$ but stops at the firewall, correctly mirroring the behavior of Euclidean RVQ where deep commitment losses do not backpropagate to the encoder.
+\end{enumerate}
+
+In summary, the firewall routes the gradients exactly where they need to go: $x$ receives a single, holistic reconstruction gradient from $q_1$, while the deep quantizers update their own codebooks independently based on both the total reconstruction and their local residual targets.
+
+
+\section*{Methods: Why Euclidean STE Avoided the Leakage in Hyperbolic RVQ}
+
+Given that the non-linear properties of Möbius addition mathematically break the residual firewall, it is natural to ask: \textit{why didn't this problem arise when using the standard Euclidean STE in the hyperbolic model?}
+
+To answer this, we must compare the gradient leak induced by the Euclidean STE with the leak induced by the exact Hyperbolic STE.
+
+\subsection*{The Gradient Leak under Euclidean STE}
+When using Euclidean STE ($hste=False$) in the hyperbolic model, the quantizer behaves as $q = x + (c_{emb} - x)\text{.detach()}$. In the backward pass, the straight-through estimator simply copies the gradient, meaning $\frac{\partial q}{\partial x} = I$ (the identity matrix).
+
+If the residual is computed as $r_{next} = x \oplus_c (-q)$, the gradient leaking to $x$ through the residual branch is:
+\begin{equation}
+    \frac{\partial r_{next}}{\partial x} = D_1 \oplus_c(x, -q) - D_2 \oplus_c(x, -q) \circ I
+\end{equation}
+Because $q$ is a quantized approximation of $x$, we have $q \approx x$, and therefore the residual $r_{next}$ is mapped very close to the origin $0$. 
+
+At the origin ($a = x, b = -x$), the differentials of Möbius addition simplify remarkably. Evaluating the Jacobians at $a \oplus_c b = 0$ yields:
+\begin{equation}
+    D_1 \oplus_c(x, -x) = \frac{\lambda_x}{\lambda_0} \text{gyr}[0, x] = \frac{\lambda_x}{2} I
+\end{equation}
+\begin{equation}
+    D_2 \oplus_c(x, -x) = \frac{\lambda_x}{\lambda_0} \text{gyr}[x, -x] = \frac{\lambda_x}{2} I
+\end{equation}
+Because $D_1 \approx D_2 \approx \frac{\lambda_x}{2} I$, we find that:
+\begin{equation}
+    \frac{\partial r_{next}}{\partial x} \approx \frac{\lambda_x}{2} I - \frac{\lambda_x}{2} I = 0
+\end{equation}
+\textbf{The leak is practically nonexistent.} Because Euclidean STE passes gradients via the identity matrix, and because the gyration operators near the origin collapse to the identity, the two differentials passively cancel each other out. The Euclidean STE accidentally relies on a first-order Taylor approximation near the origin that mimics the perfect cancellation of Euclidean space.
+
+\subsection*{The Explosion under Hyperbolic STE}
+When we switch to the exact Hyperbolic STE (\texttt{hste=True}), the backward pass uses mathematically precise parallel transport: $\frac{\partial q}{\partial x} = PT_{q \to x}$. 
+
+For \texttt{new\_method}, where $r_{next} = (-q) \oplus_c x$, the gradient leak becomes:
+\begin{equation}
+    \frac{\partial r_{next}}{\partial x} = D_2 \oplus_c(-q, x) - D_1 \oplus_c(-q, x) \circ PT_{q \to x}
+\end{equation}
+While these terms also roughly match when $q = x$, they severely diverge whenever quantization error exists ($q \neq x$). 
+Crucially, the exact parallel transport $PT_{q \to x}$ applies a strong \textbf{gyration (rotation)} to the gradient matrix. The Euclidean STE simply passed the gradient un-rotated, allowing the scalars to cancel out. But because the HSTE rigorously rotates the gradient, the term $D_1 \oplus_c \circ PT_{q \to x}$ points in a transversally different direction than $D_2 \oplus_c$. 
+
+Because subtracting rotated vectors yields a large magnitude difference, the terms completely fail to cancel:
+\begin{equation}
+    D_2 \oplus_c(-q, x) - D_1 \oplus_c(-q, x) \circ PT_{q \to x} \gg 0
+\end{equation}
+\textbf{The exactness of the HSTE exposes the leak.} By rotating the gradient mathematically correctly, the HSTE shatters the accidental "scalar cancellation" that the Euclidean STE enjoyed. The rotated gradients leak heavily into the residual branch, spiraling out of control across multiple layers. This is why introducing the mathematically rigorous HSTE mandated the explicit \texttt{.detach()} firewall.
+
+\section*{Methods: Compounding of the Residual Leak across Stacked Parallel Transports}
+
+The previous section established that a single residual layer leaks a non-zero gradient $M = \partial r_1/\partial x$ when the exact HSTE is used. In a real codec this leak never acts alone: it is incurred once per quantizer, and the resulting gradients are composed through the \emph{entire} residual cascade before reaching the encoder. This section derives the exact gradient that arrives at $x$, shows how the $N$ stacked (approximate) parallel transports multiply together, and identifies the regimes in which the composition explodes or collapses.
+
+\subsection*{Setup: the residual cascade and its transition Jacobian}
+Write the encoder output as $r_0 = x$ and unroll the \texttt{new\_method} recursion for $i = 1,\dots,N$:
+\begin{equation}
+    q_i = \mathrm{HSTE}(r_{i-1}, c_i), \qquad r_i = (-q_i)\oplus_c r_{i-1},
+\end{equation}
+with reconstruction output
+\begin{equation}
+    out = q_1 \oplus_c \big(q_2 \oplus_c (\cdots \oplus_c q_N)\big).
+\end{equation}
+In the backward pass the HSTE supplies $\partial q_i/\partial r_{i-1} = PT_{q_i\to r_{i-1}}$. Differentiating the recursion gives the per-layer \emph{transition Jacobian} $A_i := \partial r_i/\partial r_{i-1}$:
+\begin{equation}
+    A_i = \underbrace{D_2 \oplus_c(-q_i, r_{i-1})}_{\text{direct } r_{i-1}\text{ path}} \;-\; \underbrace{D_1 \oplus_c(-q_i, r_{i-1}) \circ PT_{q_i\to r_{i-1}}}_{\text{path through } q_i}.
+\end{equation}
+This $A_i$ is exactly the single-layer leak matrix $M$ of the previous section, now resolved per layer. In Euclidean RVQ $A_i = I - I = 0$; under the exact HSTE the gyrational mismatch leaves $A_i \neq 0$.
+
+\subsection*{The stacked gradient}
+Because $q_i$ depends on $x$ only through $r_{i-1}$, and $r_{i-1}$ depends on $x$ through the composition of \emph{all} earlier transitions,
+\begin{equation}
+    \frac{\partial r_{i-1}}{\partial r_0} = A_{i-1} \circ A_{i-2} \circ \cdots \circ A_1,
+    \qquad
+    \frac{\partial q_i}{\partial r_0} = PT_{q_i\to r_{i-1}} \circ A_{i-1} \circ \cdots \circ A_1 .
+\end{equation}
+Summing the reconstruction contribution of every quantizer, the gradient delivered to the encoder is
+\begin{equation}\label{eq:stack}
+    \nabla_{r_0} L_{rec} \;=\; \sum_{i=1}^{N} \Big(\, \textstyle\prod_{j=1}^{i-1} A_j \Big)^{\!\top} PT_{q_i\to r_{i-1}}^{\top}\, \nabla_{q_i} L_{rec},
+    \qquad \textstyle\prod_{j=1}^{i-1} A_j := A_{i-1} \cdots A_1 ,
+\end{equation}
+with the empty product ($i=1$) equal to $I$. Equation~\eqref{eq:stack} is the precise statement of the leak: the gradient of the $i$-th quantizer must travel back through a chain of $i-1$ transition Jacobians before it reaches $x$. If every leak were identical, $A_j \equiv M$, this collapses to the geometric form $\nabla_{r_0} L_{rec} = \sum_i (M^{i-1})^{\top} PT^{\top} \nabla_{q_i} L$ quoted heuristically earlier; in general the ordered product $A_{i-1}\cdots A_1$ replaces the power $M^{i-1}$.
+
+Two limits are immediate:
+\begin{itemize}
+    \item \textbf{Euclidean firewall} ($A_j = 0$): every term with $i \ge 2$ vanishes and $x$ receives the single clean gradient $PT_{q_1\to x}^{\top}\,\nabla_{q_1} L_{rec}$.
+    \item \textbf{HSTE without firewall} ($A_j \neq 0$): all $N$ terms survive, each filtered through a different-length product of leak matrices.
+\end{itemize}
+
+\subsection*{Spectral analysis: where it explodes or vanishes}
+Taking operator norms in \eqref{eq:stack} and writing $\rho_j := \|A_j\|$, $\tau_i := \|PT_{q_i\to r_{i-1}}\|$, $g_i := \|\nabla_{q_i} L_{rec}\|$,
+\begin{equation}
+    \|\nabla_{r_0} L_{rec}\| \;\le\; \sum_{i=1}^{N} \Big(\textstyle\prod_{j=1}^{i-1}\rho_j\Big)\, \tau_i\, g_i .
+\end{equation}
+With a representative leak magnitude $\rho := \max_j \rho_j$ and transport scale $\tau$, $g$, the bound behaves as $\tau g \sum_{i=1}^{N} \rho^{i-1} = \tau g\,\dfrac{\rho^{N}-1}{\rho-1}$, so the depth $N$ enters as an exponent:
+\begin{itemize}
+    \item $\rho > 1$: partial sums grow geometrically in $N$. Deep codebooks deliver exponentially amplified gradients to the encoder --- direct gradient \textbf{explosion}.
+    \item $\rho < 1$: deep contributions are exponentially attenuated. The encoder effectively only ``sees'' the first few quantizers --- a \textbf{vanishing-horizon} effect, present even without a firewall.
+    \item $\rho = 1$ is a non-generic knife-edge that the geometry does not hold.
+\end{itemize}
+The decisive quantity is therefore the spectral radius of the leak matrices --- exactly what \texttt{.detach()} forces to $0$.
+
+\subsection*{The conformal amplifier}
+Crucially, $\rho_j$ is not $O(1)$. Tracing the HSTE backward of Sec.~1 (the conversion $\nabla_r = \nabla/\lambda_q^2$, the isometric transport with ratio $\lambda_q/\lambda_x$, and the conversion back $\times\,\lambda_x^2$) the net scaling of the transport is \emph{first order} in the conformal-factor ratio,
+\begin{equation}
+    PT_{q_i\to r_{i-1}} \;\sim\; \frac{\lambda_{r_{i-1}}}{\lambda_{q_i}}\,\widehat{\mathrm{gyr}},
+    \qquad \lambda_z = \frac{2}{1 - c\|z\|^2},
+\end{equation}
+and the Möbius differentials $D_1\oplus_c, D_2\oplus_c$ carry their own factors $\lambda_{r_{i-1}}/\lambda_0$. As any base point migrates toward the boundary of the ball, $\|z\|^2 \to 1/c$ and $\lambda_z \to \infty$, so both $\tau_i$ and $\rho_j$ diverge. The cascade thus contains a built-in amplifier that is largest precisely when embeddings are most expressive (near the boundary) and when the quantization error is largest (early training) --- the same regime that, in Sec.~1, made the bare gyration formula numerically unstable. Even with the stabilized gyration of Sec.~1, the \emph{analytic} growth of $\lambda$ survives and is multiplied up to $N$ times in \eqref{eq:stack}.
+
+\subsection*{Compounding of the transport approximation}
+A second, independent failure mode is that the realized backward map is not the exact transport but an approximation, $\widehat{PT} = PT + E$, hence $\widehat{A}_j = A_j + E_j$, where $E_j$ collects the conformal-ratio clamps (\texttt{clamp\_min} on the denominator $d$, \texttt{clamp\_max} on $\|q\|^2,\|x\|^2$), the magnitude-only fallbacks, and finite-precision residue. The stacked product then expands as
+\begin{equation}
+    \prod_{j=1}^{i-1}\widehat{A}_j
+    \;=\; \prod_{j=1}^{i-1} A_j
+    \;+\; \sum_{k=1}^{i-1}\Big(\!\!\prod_{j>k} A_j\Big) E_k \Big(\!\!\prod_{j<k} A_j\Big)
+    \;+\; O(E^2),
+\end{equation}
+so the leading error term is itself amplified by the very products $\prod A_j$ that already drive the explosion. Approximation error and geometric leak are therefore \textbf{multiplicative}, not additive: improving the exactness of a \emph{single} transport (as in the stabilized \texttt{parallel\_transport\_1} of Sec.~1) cannot tame a product whose spectral radius exceeds one. This is precisely why patching the floating-point cancellation alone was insufficient, and why the structural fix --- detaching the residual to set $A_j = 0$ --- is required.
+
+\subsection*{Summary of failure regimes}
+The leak \eqref{eq:stack} destabilizes training whenever any of the following hold, each compounded $N$-fold by depth:
+\begin{enumerate}
+    \item \textbf{Spectral:} $\|A_j\| > 1$ for the active codebooks $\Rightarrow$ exponential gradient growth with $N$.
+    \item \textbf{Geometric:} embeddings near the boundary $\Rightarrow$ $\lambda \to \infty$ inflates every $A_j$ and $PT$.
+    \item \textbf{Numerical:} approximation error $E_j$ multiplied by the same diverging products.
+\end{enumerate}
+Setting $A_j := 0$ through the firewall removes all three simultaneously: the sum in \eqref{eq:stack} truncates to its $i=1$ term, the single Riemannian gradient $PT_{q_1\to x}^{\top}\,\nabla_{q_1} L_{rec}$ that the encoder is meant to receive.
+
+\end{document}

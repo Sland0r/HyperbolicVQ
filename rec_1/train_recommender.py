@@ -8,6 +8,8 @@ import sys
 from collections import defaultdict
 from torch.utils.data import DataLoader
 
+torch.backends.cuda.enable_cudnn_sdp(False)
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from rec_1.amazon_dataset import prepare_data, AmazonSequenceDataset
@@ -235,6 +237,8 @@ def beam_metrics(final_seqs, targets, code_to_items, ks):
 @torch.no_grad()
 def run_eval(model, loader, item_offset_padded, trie, args, ks=(5, 10)):
     model.eval()
+    use_amp = args.device == 'cuda'
+    autocast_ctx = torch.amp.autocast('cuda', dtype=torch.bfloat16) if use_amp else torch.amp.autocast('cuda', enabled=False)
     code_to_items = trie[2]
     sums = {k: [0.0, 0.0] for k in ks}   # [recall_sum, ndcg_sum]
     n = 0
@@ -242,9 +246,10 @@ def run_eval(model, loader, item_offset_padded, trie, args, ks=(5, 10)):
         src_idx = src_idx.to(args.device)
         tgt_idx = tgt_idx.to(args.device)
         src_flat, src_mask = flatten_history(src_idx, item_offset_padded, model.pad_token)
-        memory = model.encode(src_flat, src_mask)
-        final_seqs, _ = beam_search(model, memory, src_mask, trie,
-                                    args.num_beams, args.n_q, args.bins, args.device)
+        with autocast_ctx:
+            memory = model.encode(src_flat, src_mask)
+            final_seqs, _ = beam_search(model, memory, src_mask, trie,
+                                        args.num_beams, args.n_q, args.bins, args.device)
         recalls, ndcgs = beam_metrics(final_seqs, tgt_idx, code_to_items, ks)
         for k in ks:
             sums[k][0] += recalls[k]
@@ -258,11 +263,27 @@ def train(args):
     user_histories_idx, item_catalog, item_to_id, id_to_item, _ = prepare_data()
     num_items = len(item_catalog)
 
-    codes_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}.pt"
+    suffix = '_dedup' if args.dedup else ''
+    codes_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}{suffix}.pt"
     if not os.path.exists(codes_file):
-        raise FileNotFoundError(f"Item codes not found at {codes_file}. Run train_vae.py first.")
+        raise FileNotFoundError(
+            f"Item codes not found at {codes_file}. Run train_vae.py first"
+            + (" with --dedup." if args.dedup else "."))
 
     raw_codes = torch.load(codes_file).to(args.device).long()
+    # The saved tensor already has the right number of levels: n_q semantic
+    # tokens, plus a uniqueness/tie-break token when --dedup (paper §2.2). Drive
+    # the whole token pipeline off the actual width so every full id is unique.
+    n_levels = raw_codes.size(1)
+    if args.dedup:
+        max_tok = int(raw_codes.max().item())
+        if max_tok >= args.bins:
+            raise ValueError(
+                f"Dedup token value {max_tok} >= bins {args.bins}: a collision "
+                f"group is larger than the per-level vocab. Increase --bins.")
+        print(f"Dedup enabled: {n_levels} levels "
+              f"({args.n_q} semantic + 1 uniqueness token).")
+    args.n_q = n_levels
     item_offset_codes = offset_codes(raw_codes, args.bins)
 
     pad_token = args.bins * args.n_q
@@ -297,14 +318,21 @@ def train(args):
     val_dataset = AmazonSequenceDataset(val_seqs, num_items, args.seq_len)
     test_dataset = AmazonSequenceDataset(test_seqs, num_items, args.seq_len)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False)
+    dl_kwargs = dict(num_workers=4, pin_memory=True, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **dl_kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False, **dl_kwargs)
+    test_loader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False, **dl_kwargs)
 
     # Prefix trie over item multitokens for constrained beam-search generation.
     trie = build_item_trie(raw_codes[:num_items], args.n_q, args.bins, args.device)
 
+    model = torch.compile(model)
+
     print(f"Training on {len(train_seqs)} sequences, Val: {len(val_seqs)}, Test: {len(test_seqs)}.")
+
+    use_amp = args.device == 'cuda'
+    autocast_ctx = torch.amp.autocast('cuda', dtype=torch.bfloat16) if use_amp else torch.amp.autocast('cuda', enabled=False)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     best_val_recall = -1.0
     best_state = None
@@ -322,12 +350,14 @@ def train(args):
             tgt_raw = raw_codes[tgt_idx]
 
             optimizer.zero_grad()
-            logits = model(src_flat, src_padding_mask, tgt_offset)
-
-            loss = sum(loss_fn(logits[q], tgt_raw[:, q]) for q in range(args.n_q))
-            loss.backward()
+            with autocast_ctx:
+                logits = model(src_flat, src_padding_mask, tgt_offset)
+                loss = sum(loss_fn(logits[q], tgt_raw[:, q]) for q in range(args.n_q))
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
             total_loss += loss.item()
 
@@ -371,6 +401,11 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--c", type=float, default=1.0)
+    parser.add_argument("--dedup", action='store_true',
+                        help='Load the uniqueness-token codes '
+                             '(item_codes_c<c>_dedup.pt) so colliding items get '
+                             'distinct ids (paper §2.2 / TIGER). Requires '
+                             'train_vae.py to have been run with --dedup.')
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
     train(args)

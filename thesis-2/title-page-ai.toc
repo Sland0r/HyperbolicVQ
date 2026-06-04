@@ -1,0 +1,38 @@
+\babel@toc {english}{}
+\contentsline {chapter}{\numberline {1}Introduction}{1}{}%
+\contentsline {chapter}{\numberline {2}Related Work}{3}{}%
+\contentsline {section}{\numberline {2.1}Vector Quantization}{3}{}%
+\contentsline {section}{\numberline {2.2}Residual Vector Quantization}{3}{}%
+\contentsline {section}{\numberline {2.3}Hyperbolic Representation Learning}{4}{}%
+\contentsline {chapter}{\numberline {3}Background}{6}{}%
+\contentsline {section}{\numberline {3.1}Vector-Quantized Variational Autoencoders}{6}{}%
+\contentsline {paragraph}{The Straight-Through Estimator.}{6}{}%
+\contentsline {paragraph}{Training objective.}{7}{}%
+\contentsline {section}{\numberline {3.2}Residual Vector Quantization}{7}{}%
+\contentsline {paragraph}{Gradient routing in Euclidean RVQ.}{7}{}%
+\contentsline {section}{\numberline {3.3}Hyperbolic Geometry and the Poincar\'e Ball}{7}{}%
+\contentsline {subsection}{\numberline {3.3.1}The Poincar\'e Ball Model}{8}{}%
+\contentsline {subsection}{\numberline {3.3.2}Gyrovector Spaces and M\"obius Operations}{8}{}%
+\contentsline {subsection}{\numberline {3.3.3}Geodesic Distance}{8}{}%
+\contentsline {subsection}{\numberline {3.3.4}Tangent Spaces and the Exponential and Logarithmic Maps}{9}{}%
+\contentsline {subsection}{\numberline {3.3.5}Parallel Transport}{9}{}%
+\contentsline {subsection}{\numberline {3.3.6}Riemannian Gradients}{9}{}%
+\contentsline {chapter}{\numberline {4}Methods}{10}{}%
+\contentsline {section}{\numberline {4.1}Hyperbolic Residual Quantization}{10}{}%
+\contentsline {subsection}{\numberline {4.1.1}Hyperbolic Distance and Quantization}{10}{}%
+\contentsline {paragraph}{The residual mismatch.}{11}{}%
+\contentsline {subsection}{\numberline {4.1.2}The Hyperbolic Straight-Through Estimator}{11}{}%
+\contentsline {paragraph}{Geometrically valid forward pass.}{11}{}%
+\contentsline {paragraph}{Parallel-transport backward pass.}{11}{}%
+\contentsline {paragraph}{Numerically stable gyration.}{12}{}%
+\contentsline {section}{\numberline {4.2}The Residual Firewall and Gradient Routing}{12}{}%
+\contentsline {subsection}{\numberline {4.2.1}The Euclidean firewall and its breakdown}{13}{}%
+\contentsline {paragraph}{Why the Euclidean STE hid the leak.}{13}{}%
+\contentsline {subsection}{\numberline {4.2.2}Compounding across stacked transports}{13}{}%
+\contentsline {subsection}{\numberline {4.2.3}Spectral radius and the conformal amplifier}{13}{}%
+\contentsline {subsection}{\numberline {4.2.4}Restoring the firewall: the gradient-routing correction}{14}{}%
+\contentsline {paragraph}{Applicability to standard VQ-VAEs.}{14}{}%
+\contentsline {section}{\numberline {4.3}Residual Aggregation: the \texttt {new\_method} Convention}{14}{}%
+\contentsline {chapter}{\numberline {5}Experiments}{16}{}%
+\contentsline {chapter}{\numberline {6}Conclusions}{17}{}%
+\contentsline {chapter}{\numberline {A}Optional appendix}{18}{}%

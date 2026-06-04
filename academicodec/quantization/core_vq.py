@@ -82,17 +82,34 @@ def parallel_transport_1(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: f
     STE backward pass hits. This closed form is a single clamped division and
     stays an exact isometry there. Needs no geoopt internals.
     """
-    u, w = y, v  # PT uses gyr[y, ⊖x] v  ->  gyration base points (u=y, ⊖x), acting on w=v
-    u2 = u.pow(2).sum(dim=-1, keepdim=True)
-    v2 = x.pow(2).sum(dim=-1, keepdim=True)            # ||⊖x||² = ||x||²
-    uv = -(u * x).sum(dim=-1, keepdim=True)            # <y, ⊖x>
-    uw = (u * w).sum(dim=-1, keepdim=True)             # <y, v>
-    vw = -(x * w).sum(dim=-1, keepdim=True)            # <⊖x, v>
+    diff = y - x
+    x_sq = x.pow(2).sum(dim=-1, keepdim=True)
+    y_sq = y.pow(2).sum(dim=-1, keepdim=True)
+    xw = (x * v).sum(dim=-1, keepdim=True)
+    yw = (y * v).sum(dim=-1, keepdim=True)
+    diff_w = yw - xw
+    x_diff = (x * diff).sum(dim=-1, keepdim=True)
+    diff_sq = diff.pow(2).sum(dim=-1, keepdim=True)
+    
     c2 = c * c
-    a = -c2 * uw * v2 + c * vw + 2 * c2 * uv * vw
-    b = -c2 * vw * u2 - c * uw
-    d = (1 + 2 * c * uv + c2 * u2 * v2).clamp_min(1e-15)
-    gyr = w + 2 * (a * u + b * (-x)) / d
+    
+    # Numerator terms
+    a = -c2 * yw * x_sq - c * xw + 2 * c2 * (x_sq + x_diff) * xw
+    b = c2 * xw * y_sq - c * yw
+    a_plus_b = a + b
+    
+    # Stabilized difference avoiding catastrophic cancellation when y is close to x
+    a_minus_b = c * (1 - c * x_sq) * diff_w - c2 * xw * diff_sq
+    
+    # Algebraically equivalent to a * y + b * (-x) but numerically stable
+    num = 0.5 * a_plus_b * diff + 0.5 * a_minus_b * (y + x)
+    
+    # Stabilized denominator avoiding cancellation
+    one_minus_c_x_sq = 1 - c * x_sq
+    d = one_minus_c_x_sq.pow(2) - 2 * c * one_minus_c_x_sq * x_diff + c2 * x_sq * diff_sq
+    d = d.clamp_min(1e-15)
+    
+    gyr = v + 2 * num / d
 
     lam_x = conformal_factor(x, c)
     lam_y = conformal_factor(y, c)
@@ -185,20 +202,23 @@ def project(x, c, eps=1e-5):
     return torch.where(norm > max_norm, x * (max_norm / norm), x) # "project result"
 
 def exp_map(x, v, c):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
-    lambda_x = 2 / (1 - c * x2) # "exp_map lambda_x"
+    cx2 = (c * x.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5) # "exp_map c*x2"
+    lambda_x = 2 / (1 - cx2) # "exp_map lambda_x"
     return project(mobius_add(x, exp_map0(lambda_x * v / 2, c), c), c) # "exp_map result"
 
 def log_map(x, y, c):
-    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "log_map x2"
-    lambda_x = 2 / (1 - c * x2) # "log_map lambda_x"
+    cx2 = (c * x.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5) # "log_map c*x2"
+    lambda_x = 2 / (1 - cx2) # "log_map lambda_x"
     return log_map0(mobius_add(-x, y, c), c) * 2 / lambda_x # "log_map result"
 
 
 def conformal_factor(x, c):
     """Conformal factor λ_c^x = 2 / (1 - c ||x||^2)."""
-    x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5)
-    return 2.0 / (1.0 - c * x2)
+    # Clamp c||x||^2 (not the raw ||x||^2): the ball is c||x||^2 < 1, so for
+    # c != 1 clamping ||x||^2 at 1 either wrongly caps valid points (c<1) or
+    # never protects (c>1). Curvature-aware clamp is correct for all c.
+    cx2 = (c * x.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
+    return 2.0 / (1.0 - cx2)
 
 
 
@@ -253,20 +273,21 @@ def einstein_midpoint(z, w, c):
 class HyperbolicSTE(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, q, c):
+    def forward(ctx, x, q, c, riemannian=False):
         ctx.save_for_backward(x, q)
         ctx.c = c
+        ctx.riemannian = riemannian
         return q
 
     @staticmethod
     def backward(ctx, grad_output):
         x, q = ctx.saved_tensors
         c = ctx.c
-        # conformal factors
-        q2 = q.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
-        x2 = x.pow(2).sum(dim=-1, keepdim=True).clamp_max(1 - 1e-5) # "exp_map x2"
-        lambda_q = 2 / (1 - c * q2)
-        lambda_x_ = 2 / (1 - c * x2)
+        # conformal factors (clamp c*||.||^2, not the raw norm — correct for all c)
+        cq2 = (c * q.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
+        cx2 = (c * x.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
+        lambda_q = 2 / (1 - cq2)
+        lambda_x_ = 2 / (1 - cx2)
         # Euclidean -> Riemannian
         grad_r = grad_output / (lambda_q ** 2)
         # transport tangent vector (exact Poincaré-ball PT, an isometry)
@@ -275,10 +296,17 @@ class HyperbolicSTE(torch.autograd.Function):
             grad_r,
             c
         )
-        # Riemannian -> Euclidean
-        grad_e_at_x = grad_r_at_x * (lambda_x_ ** 2)
-        
-        return grad_e_at_x, None, None
+        if ctx.riemannian:
+            # Geometry-exact discount: return the *Riemannian* gradient at x
+            # (skip the Riemannian->Euclidean ×λ_x² re-conversion that explodes
+            # near the boundary). This is what a Riemannian optimizer consumes;
+            # the conformal amplification is cancelled at the source.
+            grad_x = grad_r_at_x
+        else:
+            # Riemannian -> Euclidean (standard STE; ×λ_x² amplifies near boundary)
+            grad_x = grad_r_at_x * (lambda_x_ ** 2)
+
+        return grad_x, None, None, None
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     if val == 0:
@@ -599,11 +627,13 @@ class VectorQuantization(nn.Module):
             remove: int=0,
             ema: bool=False,
             hste: bool=False,
+            hste_riemannian: bool=False,
             gyration_weight: float=0., ):
         super().__init__()
         self.c = c
         self.ema = ema
         self.hste = hste
+        self.hste_riemannian = hste_riemannian
 
         _codebook_dim: int = default(codebook_dim, dim)
 
@@ -641,7 +671,7 @@ class VectorQuantization(nn.Module):
             #     quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             # else:
             if self.hste:
-                quantize = HyperbolicSTE.apply(x, quantize, self.c)
+                quantize = HyperbolicSTE.apply(x, quantize, self.c, self.hste_riemannian)
             else:
                 quantize = x + (quantize - x).detach()
 
@@ -680,6 +710,15 @@ class ResidualVectorQuantization(nn.Module):
         if self.entailment_cone_weight > 0 and self.c > 0:
             self.entailment_cone_loss_fn = HyperbolicEntailmentConeLoss(K=0.1, c=self.c)
         self.new_method = kwargs.pop("new_method", True)
+        self.gradient_correction = kwargs.pop("gradient_correction", False)
+        # --- optional per-quantizer diagnostics (off by default; no hot-path cost) ---
+        # When self.diag is True, forward() records, per residual layer, the max
+        # Poincaré radius fraction sqrt(c)*||.|| (1.0 == ball boundary) of the
+        # residual fed in and the quantized output, and registers a backward hook
+        # capturing the gradient norm arriving at each layer's residual input.
+        # Used to test the "boundary -> grad explosion" hypothesis during training.
+        self.diag = False
+        self.diag_data = None
         self.layers = nn.ModuleList()
         for i in range(num_quantizers):
             layer_kwargs = kwargs.copy()
@@ -700,6 +739,27 @@ class ResidualVectorQuantization(nn.Module):
         else:
             self.project_in = nn.Identity()
             self.project_out = nn.Identity()
+
+    # ---- diagnostics (only active when self.diag is True) ------------------
+    def _diag_reset(self, n_q):
+        self.diag_data = {
+            'res_frac': [float('nan')] * n_q,   # max sqrt(c)*||residual_in||  (1.0 == boundary)
+            'q_frac':   [float('nan')] * n_q,   # max sqrt(c)*||quantized||
+            'grad_in':  [float('nan')] * n_q,   # ||grad|| arriving at residual_in (filled in backward)
+        }
+
+    def _diag_radius(self, t):
+        # t: (b, n, d) on the Poincaré ball; report max radius fraction over batch
+        sqrt_c = self.c ** 0.5
+        with torch.no_grad():
+            return (sqrt_c * t.norm(dim=-1)).max().item()
+
+    def _diag_layer_in(self, i, residual):
+        self.diag_data['res_frac'][i] = self._diag_radius(residual)
+        if residual.requires_grad:
+            residual.register_hook(
+                lambda g, i=i: self.diag_data['grad_in'].__setitem__(
+                    i, g.detach().norm().item()))
 
     def encode(self, x, n_q: tp.Optional[int] = None, st: int = 0):
         """Encode input to discrete code indices.
@@ -803,9 +863,15 @@ class ResidualVectorQuantization(nn.Module):
         n_q = n_q - self.remove
 
         if self.new_method and self.c > 0:
+            if self.diag:
+                self._diag_reset(n_q)
             for i, layer in enumerate(self.layers[:n_q]):
+                if self.diag:
+                    self._diag_layer_in(i, residual)
                 quantized, indices, loss = layer(residual)
                 all_quantized.append(quantized)
+                if self.diag:
+                    self.diag_data['q_frac'][i] = self._diag_radius(quantized)
 
                 if self.entailment_cone_weight > 0:
                     q_flat = rearrange(quantized.detach(), "b n d -> (b n) d")
@@ -828,6 +894,8 @@ class ResidualVectorQuantization(nn.Module):
                     loss = loss + self.gyration_weight * gyration_loss
 
                 residual = project(mobius_add(-quantized, residual, self.c), self.c)
+                if self.training and self.gradient_correction:
+                    residual = residual.detach()
 
                 if self.dot_product_weight > 0:
                     q_log = log_map0(quantized, self.c).detach()
@@ -880,6 +948,8 @@ class ResidualVectorQuantization(nn.Module):
 
                 if self.c > 0:
                     residual = project(mobius_sub(residual, quantized, self.c), self.c)
+                    if self.training and self.gradient_correction:
+                        residual = residual.detach()
                     all_quantized.append(quantized)
                 else:
                     residual = residual - quantized

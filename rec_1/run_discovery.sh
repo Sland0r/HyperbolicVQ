@@ -24,21 +24,40 @@ mkdir -p ${SAVE_DIR}
 
 echo "Starting Hierarchy Discovery Experiments..."
 
+# Uniqueness/tie-break token (paper §2.2). Set DEDUP=1 to append a per-item
+# disambiguation token so colliding multitokens map to distinct items.
+DEDUP=${DEDUP:-0}
+DEDUP_FLAG=""
+if [ "${DEDUP}" = "1" ]; then
+    DEDUP_FLAG="--dedup"
+    echo "Uniqueness token enabled (--dedup)."
+fi
+
 python3 rec_1/train_vae.py \
     --c 1.0 \
     --epochs 5000 \
     --embed_dim 32 \
+    --dedup \
     --bins 128 \
     --lr 1e-4 \
     --batch_size 2048 \
     --save_dir ${SAVE_DIR} \
     --quant 0.01 \
     --recon 1000 \
-    --approx
+    --hste_riemannian \
+    --approx \
+    --hste \
+    --new_method \
+    ${DEDUP_FLAG}
+    #--new_method \
+    #--hste \
+    
 python3 rec_1/train_recommender.py \
     --c 1.0 \
+    --dedup \
     --epochs 100 \
     --lr 1e-4 \
-    --warmup_epochs 0
+    --warmup_epochs 0 \
+    ${DEDUP_FLAG}
 
 echo "Done!"

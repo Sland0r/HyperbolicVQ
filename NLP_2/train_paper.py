@@ -29,14 +29,23 @@ from NLP_2.dataset_paper import WordNetHierarchyDataset
 
 class HRQModel(nn.Module):
     def __init__(self, vocab_size, embed_dim, n_q=4, bins=256, c=1.0,
-                 new_method=True, hste=False, approx=False,
-                 commitment_weight=0.25, ema=False):
+                 new_method=True, hste=False, hste_riemannian=False, approx=False,
+                 commitment_weight=0.25, ema=False, gradient_correction=False,
+                 embed_init_scale=1.0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
+        # Scale down the (default N(0,1)) embedding init so exp_map0(emb) does not
+        # saturate at the ball boundary, where the HSTE backward's conformal factor
+        # λx² amplifies gradients without bound.
+        if embed_init_scale != 1.0:
+            with torch.no_grad():
+                self.embedding.weight.mul_(embed_init_scale)
         self.quantizer = ResidualVectorQuantizer(
             dimension=embed_dim, n_q=n_q, bins=bins, c=c,
-            new_method=new_method, hste=hste, approx=approx,
+            new_method=new_method, hste=hste, hste_riemannian=hste_riemannian,
+            approx=approx,
             commitment_weight=commitment_weight, ema=ema,
+            gradient_correction=gradient_correction,
         )
         self.c = c
 
@@ -124,6 +133,13 @@ class Diagnostics:
         self._cb0 = {n: p.detach().clone() for n, p in self.cb_params}
 
         self.ball_r = (1.0 / math.sqrt(args.c)) if args.c > 0 else float('inf')
+
+        # Enable per-quantizer residual-radius / grad-norm capture in the RVQ.
+        # (Only the hyperbolic new_method branch records; harmless otherwise.)
+        self._vq = getattr(getattr(base_model, 'quantizer', None), 'vq', None)
+        if self._vq is not None and args.c > 0:
+            self._vq.diag = True
+        self._dumped_explode = False
 
         # per-epoch history
         self.h = {k: [] for k in
@@ -216,6 +232,34 @@ class Diagnostics:
                               f"-> vanishing gradients")
         self._g_emb += g_emb
         self._g_cb += g_cb
+
+    # ---- per-quantizer residual-radius / grad-norm dump ------------------
+    def dump_quantizer(self, step, loss_val):
+        """Print the per-layer residual radius fraction (1.0 == ball boundary)
+        and the gradient norm arriving at each layer's residual input. Dumps on
+        the first 3 steps, then only when something looks pathological (loss
+        non-finite, a residual near the boundary, or an exploding grad)."""
+        if not self.enabled or self._vq is None:
+            return
+        d = getattr(self._vq, 'diag_data', None)
+        if not d:
+            return
+        res = d['res_frac']; q = d['q_frac']; gin = d['grad_in']
+        bad_loss = not math.isfinite(loss_val)
+        near_bnd = any(math.isfinite(r) and r > 0.95 for r in res)
+        explode = any(math.isfinite(g) and g > self.EXPLODE for g in gin)
+        if not (step < 3 or bad_loss or near_bnd or explode):
+            return
+        if (near_bnd or explode) and not self._dumped_explode:
+            self._dumped_explode = True
+            self.warn('boundary_explode',
+                      "residual near ball boundary and/or exploding grad in RVQ "
+                      f"(step {step}) — see per-quantizer dump")
+        tag = "DIVERGE" if (bad_loss or explode) else ("NEAR-BND" if near_bnd else "ok")
+        print(f"  [TEST][RVQ step {step}] loss={loss_val:.3e} [{tag}]")
+        for i in range(len(res)):
+            print(f"      Q{i}: res_radius/R={res[i]:.4f}  "
+                  f"q_radius/R={q[i]:.4f}  grad_in={gin[i]:.3e}")
 
     # ---- end of epoch ----------------------------------------------------
     def log_epoch(self, code_counts):
@@ -321,6 +365,73 @@ class Diagnostics:
         print(f"[TEST] diagnostics figure saved to {path}")
 
 
+def init_codebooks_constructive(model, args, log):
+    """Initialise every codebook with constructive tree embeddings (depth-1 tree
+    with ``bins`` children), copying the same points into all ``n_q`` layers.
+
+    This mirrors ``egs/MNIST_VQVAE/train.py``'s ``--constructive`` path. The
+    points are produced in Poincaré-ball coordinates for the run's curvature and
+    scaled by ``1/n_q`` so the residual chain stays well inside the ball.
+
+    NOTE: the tree-embedding helper optimises the sphere points with
+    ``torch.autograd.set_detect_anomaly(True)`` and never turns it back off. That
+    global flag makes *every* later backward pass run under anomaly detection,
+    which is the reason MNIST training crawls after a constructive init. We force
+    it back off once the embedding is built.
+    """
+    import sys
+    sys.path.insert(0, '/home/acolombo/music/hyperbolic_tree_embeddings')
+    from tree_embeddings.trees.file_utils import load_hierarchy
+    from tree_embeddings.embeddings.constructive_method import constructively_embed_tree
+
+    device = args.device
+    # Balanced tree: bins children at depth 1 -> bins+1 nodes total
+    hierarchy = load_hierarchy(dataset="n_h_trees", hierarchy_name=f"{args.bins}_1")
+
+    curvature = args.c if args.c > 0 else 1.0
+    try:
+        embeddings, _, _ = constructively_embed_tree(
+            hierarchy=hierarchy,
+            dataset="n_h_trees",
+            hierarchy_name=f"{args.bins}_1",
+            embedding_dim=args.embed_dim,
+            tau=1.0,
+            nc=1,
+            curvature=curvature,
+            root=0,
+            gen_type="optim",
+            dtype=torch.float64,
+        )
+    finally:
+        # Undo the global anomaly-detection flag flipped on inside the optimiser
+        # (see docstring) — otherwise the whole training run is crippled.
+        torch.autograd.set_detect_anomaly(False)
+
+    # Skip root (index 0, at origin); keep the bins children. The /n_q keeps the
+    # residual chain inside the ball; --init_scale shrinks the points further so
+    # the constructive codebooks (and hence residuals) stay off the boundary,
+    # where the HSTE backward's conformal factor explodes.
+    code_points = embeddings[1:].to(dtype=torch.float32, device=device) * (args.init_scale / args.n_q)  # (bins, D)
+    assert code_points.shape == (args.bins, args.embed_dim), \
+        f"Expected ({args.bins}, {args.embed_dim}), got {code_points.shape}"
+    sqrt_c = (args.c ** 0.5) if args.c > 0 else 1.0
+    log(f"Constructive init radius fraction (sqrt(c)*||p||): "
+        f"max={(sqrt_c * code_points.norm(dim=-1)).max().item():.4f} "
+        f"mean={(sqrt_c * code_points.norm(dim=-1)).mean().item():.4f}  (1.0 == boundary)")
+
+    # Copy the same points into every codebook
+    with torch.no_grad():
+        for qi in range(args.n_q):
+            cb = model.quantizer.vq.layers[qi]._codebook
+            cb.embed.data.copy_(code_points)
+            cb.embed_avg.data.copy_(code_points)
+            cb.inited.data.copy_(torch.Tensor([True]))
+            cb.cluster_size.data.fill_(cb.threshold_ema_dead_code + 1)
+
+    log(f"Constructive init: {tuple(code_points.shape)} points copied to all "
+        f"{args.n_q} codebooks (curvature={curvature}, tau=1.0)")
+
+
 def train(args):
     dataset = WordNetHierarchyDataset(num_negatives=50, split='train',
                                       split_mode=args.split_mode)
@@ -333,9 +444,25 @@ def train(args):
     model = HRQModel(
         vocab_size=dataset.vocab_size, embed_dim=args.embed_dim, n_q=args.n_q,
         bins=args.bins, c=args.c, new_method=args.new_method, hste=args.hste,
+        hste_riemannian=args.hste_riemannian,
         approx=args.approx, commitment_weight=args.commitment_weight,
-        ema=args.ema,
+        ema=args.ema, gradient_correction=args.gradient_correction,
+        embed_init_scale=args.embed_init_scale,
     ).to(args.device)
+
+    save_dir = args.save_dir
+    os.makedirs(save_dir, exist_ok=True)
+    log_path = os.path.join(save_dir, 'logs.txt')
+    log_file = open(log_path, 'w')
+
+    def log(msg):
+        print(msg)
+        log_file.write(msg + '\n')
+        log_file.flush()
+
+    # Constructive codebook initialisation (before the optimiser captures params)
+    if args.init:
+        init_codebooks_constructive(model, args, log)
 
     if args.c > 0:
         manifold_params, euclidean_params = [], []
@@ -359,18 +486,37 @@ def train(args):
     if args.compile:
         model = torch.compile(model)
 
-    save_dir = args.save_dir
-    os.makedirs(save_dir, exist_ok=True)
-    log_path = os.path.join(save_dir, 'logs.txt')
-    log_file = open(log_path, 'w')
-
-    def log(msg):
-        print(msg)
-        log_file.write(msg + '\n')
-        log_file.flush()
-
-    log(f"Args: {vars(args)}")
-    log(f"Split mode: {dataset.split_mode}")
+    log("=" * 50)
+    log("HYPERPARAMETERS")
+    log("=" * 50)
+    log(f"  {'curvature (c)':<25s} {args.c}")
+    log(f"  {'embed_dim':<25s} {args.embed_dim}")
+    log(f"  {'n_q':<25s} {args.n_q}")
+    log(f"  {'bins':<25s} {args.bins}")
+    log(f"  {'batch_size':<25s} {args.batch_size}")
+    log(f"  {'epochs':<25s} {args.epochs}")
+    log(f"  {'lr':<25s} {args.lr}")
+    log(f"  {'warmup_lr':<25s} {args.warmup_lr}")
+    log(f"  {'warmup_epochs':<25s} {args.warmup_epochs}")
+    log(f"  {'commitment_weight':<25s} {args.commitment_weight}")
+    log(f"  {'quant':<25s} {args.quant}")
+    log(f"  {'split_mode':<25s} {args.split_mode}")
+    log(f"  {'new_method':<25s} {args.new_method}")
+    log(f"  {'approx':<25s} {args.approx}")
+    log(f"  {'hste':<25s} {args.hste}")
+    log(f"  {'hste_riemannian':<25s} {args.hste_riemannian}")
+    log(f"  {'embed_init_scale':<25s} {args.embed_init_scale}")
+    log(f"  {'radius_penalty':<25s} {args.radius_penalty}")
+    log(f"  {'gradient_correction':<25s} {args.gradient_correction}")
+    log(f"  {'grad_clip':<25s} {args.grad_clip}")
+    log(f"  {'grad_clip_mode':<25s} {args.grad_clip_mode}")
+    log(f"  {'grad_norm':<25s} {args.grad_norm}")
+    log(f"  {'ema':<25s} {args.ema}")
+    log(f"  {'compile':<25s} {args.compile}")
+    log(f"  {'init':<25s} {args.init}")
+    log(f"  {'init_scale':<25s} {args.init_scale}")
+    log(f"  {'device':<25s} {args.device}")
+    log("=" * 50)
     log(f"Dataset size: {len(dataset)}, Batches/epoch: {len(dataloader)}")
     log("")
 
@@ -430,6 +576,12 @@ def train(args):
             quant_penalty = u_commit.mean() + v_commit.mean()
             commit = quant_penalty * args.quant
             loss = ce_loss + commit
+            # Radius penalty: pull pre-map embedding norms toward the origin so
+            # exp_map0(emb) stays off the boundary (where the HSTE conformal
+            # factor λx² explodes). L2 on ||emb|| is monotone in the ball radius.
+            if args.radius_penalty > 0:
+                rad = u_emb.pow(2).sum(-1).mean() + v_emb.pow(2).sum(-1).mean()
+                loss = loss + args.radius_penalty * rad
             diag.check_forward(
                 i,
                 {'u_emb': u_emb, 'v_emb': v_emb, 'logits': logits,
@@ -437,6 +589,27 @@ def train(args):
                 u_emb, logits, labels, pos_dist, neg_dist)
             loss.backward()
             diag.check_grads(i)
+            diag.dump_quantizer(i, loss.item())
+            if args.grad_clip > 0:
+                if args.grad_clip_mode == 'global':
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                elif args.grad_clip_mode == 'perparam':
+                    # Clip each parameter tensor's grad-norm independently, so an
+                    # explosion in one tensor does not crush the others' signal.
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            torch.nn.utils.clip_grad_norm_(p, args.grad_clip)
+                elif args.grad_clip_mode == 'embed':
+                    # Clip only the encoder-embedding grad (the tensor the HSTE
+                    # conformal explosion actually lands on).
+                    torch.nn.utils.clip_grad_norm_([model.embedding.weight], args.grad_clip)
+            elif args.grad_norm:
+                # Scale-free: renormalise the whole gradient to unit L2 norm.
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
+                if torch.isfinite(total_norm) and total_norm > 0:
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            p.grad.div_(total_norm.clamp_min(1e-12))
             optimizer.step()
 
             total_loss += loss.detach()
@@ -444,7 +617,7 @@ def train(args):
             total_commit += commit.detach()
             total_dist += (u_dist.detach() + v_dist.detach()) / 2
             if i % 100 == 0:
-                log(f"  Step {i}, Loss: {loss.item():.4f} (CE: {ce_loss.item():.4f}, Commit: {commit.item():.4f})")
+                print(f"  Step {i}, Loss: {loss.item():.4f} (CE: {ce_loss.item():.4f}, Commit: {commit.item():.4f})")
 
         diag.log_epoch(code_counts)
         n_batches = len(dataloader)
@@ -469,11 +642,16 @@ def train(args):
         history['approx_dist'].append(avg_dist)
 
         elapsed = time.time() - train_start
-        log(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_loss:.4f} "
-            f"(CE: {avg_ce:.4f}, Commit: {avg_commit:.4f}, ApproxDist: {avg_dist:.6f}), "
-            f"PPL: [{', '.join(ppl_strs)}], Time: {elapsed:.0f}s")
+        print(f"Epoch {epoch+1}/{args.epochs}, Loss: {avg_loss:.4f} "
+              f"(CE: {avg_ce:.4f}, Commit: {avg_commit:.4f}, ApproxDist: {avg_dist:.6f}), "
+              f"PPL: [{', '.join(ppl_strs)}], Time: {elapsed:.0f}s")
 
-    log(f"\nTraining finished in {time.time() - train_start:.0f}s")
+    train_elapsed = time.time() - train_start
+    log(f"\nTraining finished in {train_elapsed:.0f}s")
+    log(f"Final loss: {history['loss'][-1]:.4f} "
+        f"(CE: {history['ce_loss'][-1]:.4f}, "
+        f"Commit: {history['commit_loss'][-1]:.4f}, "
+        f"ApproxDist: {history['approx_dist'][-1]:.6f})")
 
     # Validation pass (no_grad over entire dataset)
     model.eval()
@@ -586,6 +764,39 @@ if __name__ == '__main__':
     parser.add_argument('--new_method', action='store_true')
     parser.add_argument('--approx', action='store_true')
     parser.add_argument('--hste', action='store_true')
+    parser.add_argument('--hste_riemannian', action='store_true',
+                        help='Geometry-exact discount: HyperbolicSTE.backward returns '
+                             'the Riemannian gradient at x (skips the ×λ_x² '
+                             'Riemannian->Euclidean re-conversion that explodes near '
+                             'the ball boundary). Requires --hste.')
+    parser.add_argument('--gradient_correction', action='store_true',
+                        help='Detach the residual after each quantization step (gradient correction)')
+    parser.add_argument('--embed_init_scale', type=float, default=1.0,
+                        help='Multiplier on the embedding init (e.g. 0.05) to keep '
+                             'exp_map0(emb) off the ball boundary')
+    parser.add_argument('--radius_penalty', type=float, default=0.0,
+                        help='Weight of an L2 penalty on ||emb|| that keeps mapped '
+                             'embeddings off the ball boundary')
+    parser.add_argument('--init', action='store_true',
+                        help='initialize every codebook with constructive tree '
+                             'embeddings (depth=1, bins children) — same scheme as '
+                             'egs/MNIST_VQVAE/train.py --constructive')
+    parser.add_argument('--init_scale', type=float, default=1.0,
+                        help='extra multiplier on the constructive codebook init '
+                             '(on top of the 1/n_q factor) to keep the points off '
+                             'the ball boundary')
+    parser.add_argument('--grad_clip', type=float, default=0.0,
+                        help='Max global grad-norm for clip_grad_norm_ (0 = off). '
+                             'Tames the HSTE conformal-factor explosion near the '
+                             'ball boundary.')
+    parser.add_argument('--grad_clip_mode', type=str, default='global',
+                        choices=['global', 'perparam', 'embed'],
+                        help="Scope of --grad_clip: 'global' (whole model, one "
+                             "norm), 'perparam' (each tensor independently), or "
+                             "'embed' (only the encoder-embedding tensor).")
+    parser.add_argument('--grad_norm', action='store_true',
+                        help='Renormalise the global gradient to unit norm before '
+                             'optimizer.step (scale-free; complementary to --grad_clip).')
     parser.add_argument('--test', action='store_true',
                         help='Enable training diagnostics: per-component '
                              'gradient / NaN / Poincaré-ball / dead-code '

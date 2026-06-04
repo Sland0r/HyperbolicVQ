@@ -179,12 +179,26 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
     split_mode = cfg.get('split_mode', 'closure')
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Evaluating model with c={c}, split_mode={split_mode}...")
+
+    log_path = os.path.join(checkpoint_dir, 'logs.txt')
+    log_file = open(log_path, 'a')
+
+    def log(msg):
+        print(msg)
+        log_file.write(msg + '\n')
+        log_file.flush()
+
+    log("")
+    log("=" * 50)
+    log("EVALUATION")
+    log("=" * 50)
+    log(f"Evaluating model with c={c}, split_mode={split_mode}...")
 
     dataset = WordNetHierarchyDataset(num_negatives=1, split_mode=split_mode)
     hrq_model = HRQModel(
         vocab_size=dataset.vocab_size, embed_dim=embed_dim, n_q=n_q, bins=bins, c=c,
         new_method=cfg.get('new_method', False), hste=cfg.get('hste', False),
+        gradient_correction=cfg.get('gradient_correction', False),
     ).to(device)
     model_path = os.path.join(checkpoint_dir, 'model.pt')
     if os.path.exists(model_path):
@@ -192,7 +206,7 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
     hrq_model.eval()
 
     # ── Extract discrete multitokens for every noun ──────────────────
-    print("Extracting discrete tokens for all concepts...")
+    log("Extracting discrete tokens for all concepts...")
     all_noun_indices = torch.arange(dataset.vocab_size, device=device)
     with torch.no_grad():
         all_tokens = []
@@ -207,20 +221,20 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
         all_tokens = torch.cat(all_tokens, dim=0)  # (vocab_size, n_q)
 
     n_unique = torch.unique(all_tokens, dim=0).shape[0]
-    print(f"  Unique token sequences: {n_unique} / {all_tokens.shape[0]} total concepts")
+    log(f"  Unique token sequences: {n_unique} / {all_tokens.shape[0]} total concepts")
 
     train_pairs = dataset.train_pairs
     test_pairs = dataset.test_pairs
-    print(f"  Train pairs: {len(train_pairs)}, Test pairs: {len(test_pairs)}")
+    log(f"  Train pairs: {len(train_pairs)}, Test pairs: {len(test_pairs)}")
 
     pop_baseline, comp_baseline = compute_baselines(dataset, k=10)
-    print(f"  [baseline] global-popularity@10:   {pop_baseline:.1f}%")
-    print(f"  [baseline] graph-composition@10:   {comp_baseline:.1f}%")
+    log(f"  [baseline] global-popularity@10:   {pop_baseline:.1f}%")
+    log(f"  [baseline] graph-composition@10:   {comp_baseline:.1f}%")
 
     all_tokens = all_tokens + 1  # shift 0..bins-1 -> 1..bins (0 = BOS)
 
     # ── Train seq2seq transformer (paper: 100 epochs, Adam lr=1e-3) ──
-    print("Training Sequence-to-Sequence model...")
+    log(f"Training Seq2Seq model ({epochs} epochs, teacher_forcing={teacher_forcing})...")
     transformer = Seq2SeqTransformer(vocab_size=bins + 1, n_q=n_q).to(device)
     optimizer = torch.optim.Adam(transformer.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
@@ -258,7 +272,7 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
     hits = 0
 
     if beam_search:
-        print(f"Evaluating Recall@{k} (beam search, beam_size={k}) — paper-faithful...")
+        log(f"Evaluating Recall@{k} (beam search, beam_size={k})...")
         with torch.no_grad():
             for i in tqdm(range(0, len(test_pairs), eval_batch_size), desc="Recall eval"):
                 batch_pairs = test_pairs[i:i + eval_batch_size]
@@ -271,7 +285,7 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
                 hits += matches.sum().item()
         decode_mode = "beam search"
     else:
-        print(f"Evaluating Recall@{k} (per-position top-{k} diagnostic)...")
+        log(f"Evaluating Recall@{k} (per-position top-{k} diagnostic)...")
         with torch.no_grad():
             for i in tqdm(range(0, len(test_pairs), eval_batch_size), desc="Recall eval"):
                 batch_pairs = test_pairs[i:i + eval_batch_size]
@@ -287,12 +301,22 @@ def run_evaluation(checkpoint_dir, epochs=100, batch_size=128,
 
     recall_k = hits / len(test_pairs) * 100
     model_type = "HRQ" if c > 0 else "RQ"
-    print("\n=========================================")
-    print(f"  Recall@{k} for {model_type} (c={c}, split={split_mode}, {decode_mode}): {recall_k:.1f}%")
-    print(f"  (unique codes: {n_unique}, test pairs: {len(test_pairs)})")
-    print(f"  no-model baselines -> popularity@{k}: {pop_baseline:.1f}%, composition@{k}: {comp_baseline:.1f}%")
-    print(f"  (model meaningfully beats leakage only if {recall_k:.1f}% >> {comp_baseline:.1f}%)")
-    print("=========================================\n")
+    log("")
+    log("-" * 50)
+    log("RESULTS")
+    log("-" * 50)
+    log(f"  Model type:              {model_type} (c={c})")
+    log(f"  Split mode:              {split_mode}")
+    log(f"  Decode mode:             {decode_mode}")
+    log(f"  Total concepts:          {all_tokens.shape[0]}")
+    log(f"  Unique token sequences:  {n_unique}")
+    log(f"  Train pairs:             {len(train_pairs)}")
+    log(f"  Test pairs:              {len(test_pairs)}")
+    log(f"  Recall@{k}:               {recall_k:.1f}%")
+    log(f"  Popularity@{k} baseline:  {pop_baseline:.1f}%")
+    log(f"  Composition@{k} baseline: {comp_baseline:.1f}%")
+    log("=" * 50)
+    log_file.close()
 
 
 if __name__ == "__main__":

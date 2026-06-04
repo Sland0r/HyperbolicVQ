@@ -19,7 +19,8 @@ from rec_1.amazon_dataset import prepare_data
 
 class HRQVAE(nn.Module):
     def __init__(self, input_dim, hidden_dim, embed_dim, n_q=4, bins=256, c=1.0,
-                 kmeans_init=False, ema=False, new_method=False, hste=False, approx=False):
+                 kmeans_init=False, ema=False, new_method=False, hste=False, approx=False,
+                 hste_riemannian=False, gradient_correction=False):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -41,6 +42,8 @@ class HRQVAE(nn.Module):
             new_method=new_method,
             hste=hste,
             approx=approx,
+            hste_riemannian=hste_riemannian,
+            gradient_correction=gradient_correction,
         )
         self.decoder = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim // 4),
@@ -85,7 +88,9 @@ def train(args):
 
     model = HRQVAE(args.input_dim, args.hidden_dim, args.embed_dim, args.n_q, args.bins, args.c,
                    kmeans_init=args.kmeans_init, ema=args.ema,
-                   new_method=args.new_method, hste=args.hste, approx=args.approx).to(args.device)
+                   new_method=args.new_method, hste=args.hste, approx=args.approx,
+                   hste_riemannian=args.hste_riemannian,
+                   gradient_correction=args.gradient_correction).to(args.device)
 
     if args.c > 0:
         manifold_params = []
@@ -274,11 +279,39 @@ def train(args):
         perplexity = entropy.exp().item()
         log(f"  Level {q}: {unique_at_level}/{args.bins} codebook entries used, perplexity: {perplexity:.2f}")
 
-    log_file.close()
-
     codes_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}.pt"
     torch.save(all_codes, codes_file)
-    print(f"Saved {all_codes.shape[0]} discrete codes to {codes_file}")
+    log(f"Saved {all_codes.shape[0]} discrete codes to {codes_file}")
+
+    if args.dedup:
+        # TIGER-style uniqueness token (paper §2.2): append a per-item counter
+        # that disambiguates items colliding on the same n_q-token multitoken,
+        # so every full (n_q+1)-token id is unique. The extra token carries no
+        # semantic information — it only breaks ties.
+        seen = {}
+        dedup_col = torch.empty(num_items, 1, dtype=all_codes.dtype)
+        for i in range(num_items):
+            key = tuple(all_codes[i].tolist())
+            cnt = seen.get(key, 0)
+            dedup_col[i, 0] = cnt
+            seen[key] = cnt + 1
+        max_group = max(seen.values())
+        log(f"\n--- Dedup (uniqueness) token ---")
+        log(f"Max items sharing a multitoken: {max_group} "
+            f"(dedup token range 0..{max_group - 1})")
+        if max_group > args.bins:
+            log(f"  WARNING: max collision group {max_group} > bins {args.bins}; "
+                f"the dedup token will exceed the per-level vocab used by "
+                f"train_recommender.py. Increase --bins.")
+        all_codes_dedup = torch.cat([all_codes, dedup_col], dim=1)
+        n_unique_full = torch.unique(all_codes_dedup, dim=0).shape[0]
+        log(f"Unique full sequences after dedup: {n_unique_full}/{num_items} "
+            f"(ratio {n_unique_full / num_items:.4f})")
+        dedup_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}_dedup.pt"
+        torch.save(all_codes_dedup, dedup_file)
+        log(f"Saved dedup codes {tuple(all_codes_dedup.shape)} to {dedup_file}")
+
+    log_file.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -300,10 +333,19 @@ if __name__ == "__main__":
                         help='Track hyperbolic approximation distance (quantized+residual vs input)')
     parser.add_argument("--hste", action='store_true',
                         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
+    parser.add_argument("--hste_riemannian", action='store_true',
+                        help='Use Riemannian (conformal-factor scaled) gradient in the hyperbolic STE')
+    parser.add_argument("--gradient_correction", action='store_true',
+                        help='Detach the residual after each quantization step (gradient correction)')
     parser.add_argument("--quant", type=float, default=1.0,
                         help='Multiplier for the quantizer penalty term')
     parser.add_argument("--recon", type=float, default=1.0,
                         help='Multiplier for the reconstruction loss term')
+    parser.add_argument("--dedup", action='store_true',
+                        help='Also save a uniqueness-token variant of the codes '
+                             '(paper §2.2): appends a per-item tie-break token so '
+                             'colliding multitokens become unique. Written to '
+                             'item_codes_c<c>_dedup.pt for train_recommender.py --dedup.')
     parser.add_argument("--save_dir", type=str, default="checkpoint/rec_1/default")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()

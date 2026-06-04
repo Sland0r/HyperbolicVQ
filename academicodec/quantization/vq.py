@@ -59,6 +59,8 @@ class ResidualVectorQuantizer(nn.Module):
             new_method: bool=True,
             approx: bool=False,
             hste: bool=False,
+            hste_riemannian: bool=False,
+            gradient_correction: bool=False,
             ):
         super().__init__()
         self.n_q = n_q
@@ -75,6 +77,8 @@ class ResidualVectorQuantizer(nn.Module):
         self.new_method = new_method
         self.approx = approx
         self.hste = hste
+        self.hste_riemannian = hste_riemannian
+        self.gradient_correction = gradient_correction
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_dim=self.codebook_dim,
@@ -93,7 +97,9 @@ class ResidualVectorQuantizer(nn.Module):
             remove=self.remove,
             ema=self.ema,
             new_method=self.new_method,
-            hste=self.hste)
+            hste=self.hste,
+            hste_riemannian=self.hste_riemannian,
+            gradient_correction=self.gradient_correction)
 
     def forward(self,
                 x: torch.Tensor,
