@@ -17,11 +17,11 @@ export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 NAME="fuck_the_shapes"
 
 # POINCARE
-C=0.05
+C=1.0
 
 # TRAINING
 BATCH_SIZE=32
-N_EPOCHS=10
+N_EPOCHS=3
 WARMUP_EPOCHS_G=0
 NUMBER_OF_STEPS=1000 # plot codebook every n batches
 PRINT_FREQ=1000 # log every n batches
@@ -35,8 +35,8 @@ SR=24000
 
 # LEARNING RATES AND LOSSES
 LR_G=3e-4
-LR_MANIFOLD=1e-5
-LAMBDA_COM=1000        # complete latent loss
+LR_MANIFOLD=1e-4
+LAMBDA_COM=1        # complete latent loss
 LAMBDA_FEAT=1           # feature loss
 LAMBDA_ADV=1            # adversarial loss
 LAMBDA_RECON=1          # reconstruction loss
@@ -82,7 +82,8 @@ python3 -u /home/acolombo/VAEs/egs/SoundStream_24k_240d/main3_ddp.py \
         --warmup_epochs_g ${WARMUP_EPOCHS_G} \
         --uniform \
         --constructive \
-        --new_method \                          # solution, parallel_transport, gyration
+        #--new_method
+        # residual-transport alternatives: --solution, --parallel_transport, --gyration
 
 # Extract PPLs from the generated log file automatically
 python3 /home/acolombo/VAEs/egs/SoundStream_24k_240d/extract_ppls.py logs/${NAME}_${SLURM_JOB_ID}.out

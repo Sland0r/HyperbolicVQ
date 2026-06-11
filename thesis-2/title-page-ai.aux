@@ -105,51 +105,111 @@
 \newlabel{eq:bg_pt}{{3.13}{9}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3.6}Riemannian Gradients}{9}{}\protected@file@percent }
 \newlabel{eq:bg_riemgrad}{{3.14}{9}}
-\citation{hrqvae}
 \@writefile{toc}{\contentsline {chapter}{\numberline {4}Methods}{10}{}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
 \newlabel{chap:methods}{{4}{10}}
-\@writefile{toc}{\contentsline {section}{\numberline {4.1}Hyperbolic Residual Quantization}{10}{}\protected@file@percent }
-\newlabel{sec:hrq}{{4.1}{10}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.1}Hyperbolic Distance and Quantization}{10}{}\protected@file@percent }
-\newlabel{eq:prev_residual}{{4.2}{10}}
-\@writefile{toc}{\contentsline {paragraph}{The residual mismatch.}{11}{}\protected@file@percent }
-\newlabel{eq:true_residual}{{4.3}{11}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.2}The Hyperbolic Straight-Through Estimator}{11}{}\protected@file@percent }
-\newlabel{sec:hste}{{4.1.2}{11}}
-\@writefile{toc}{\contentsline {paragraph}{Geometrically valid forward pass.}{11}{}\protected@file@percent }
-\newlabel{eq:hste_forward}{{4.4}{11}}
-\@writefile{toc}{\contentsline {paragraph}{Parallel-transport backward pass.}{11}{}\protected@file@percent }
-\newlabel{eq:hste_backward}{{4.5}{12}}
-\@writefile{toc}{\contentsline {paragraph}{Numerically stable gyration.}{12}{}\protected@file@percent }
-\newlabel{eq:gyr_d_stable}{{4.7}{12}}
-\newlabel{eq:gyr_amb}{{4.8}{12}}
-\@writefile{toc}{\contentsline {section}{\numberline {4.2}The Residual Firewall and Gradient Routing}{12}{}\protected@file@percent }
-\newlabel{sec:firewall}{{4.2}{12}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2.1}The Euclidean firewall and its breakdown}{13}{}\protected@file@percent }
-\newlabel{eq:leak}{{4.9}{13}}
-\@writefile{toc}{\contentsline {paragraph}{Why the Euclidean STE hid the leak.}{13}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2.2}Compounding across stacked transports}{13}{}\protected@file@percent }
-\newlabel{eq:stack}{{4.10}{13}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2.3}Spectral radius and the conformal amplifier}{13}{}\protected@file@percent }
-\newlabel{eq:spectral}{{4.11}{13}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2.4}Restoring the firewall: the gradient-routing correction}{14}{}\protected@file@percent }
-\newlabel{sec:gradcorr}{{4.2.4}{14}}
-\@writefile{toc}{\contentsline {paragraph}{Applicability to standard VQ-VAEs.}{14}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4.3}Residual Aggregation: the \texttt  {new\_method} Convention}{14}{}\protected@file@percent }
-\newlabel{sec:newmethod}{{4.3}{14}}
+\@writefile{toc}{\contentsline {section}{\numberline {4.1}The Hyperbolic Straight-Through Estimator}{10}{}\protected@file@percent }
+\newlabel{sec:hste}{{4.1}{10}}
+\@writefile{toc}{\contentsline {paragraph}{Parallel-transport backward pass.}{10}{}\protected@file@percent }
+\newlabel{eq:hste_backward}{{4.1}{10}}
+\@writefile{toc}{\contentsline {paragraph}{Numerically stable gyration.}{11}{}\protected@file@percent }
+\newlabel{eq:gyr_d_stable}{{4.3}{11}}
+\newlabel{eq:gyr_amb}{{4.4}{11}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.1}The Euclidean firewall and its breakdown}{11}{}\protected@file@percent }
+\newlabel{sec:firewall}{{4.1.1}{11}}
+\newlabel{eq:leak}{{4.5}{11}}
+\@writefile{toc}{\contentsline {paragraph}{Why the Euclidean STE hid the leak.}{12}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.2}Compounding across stacked transports}{12}{}\protected@file@percent }
+\newlabel{eq:stack}{{4.6}{12}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.3}Spectral radius and the conformal amplifier}{12}{}\protected@file@percent }
+\newlabel{eq:spectral}{{4.7}{12}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.4}Restoring the firewall: the gradient-routing correction}{13}{}\protected@file@percent }
+\newlabel{sec:gradcorr}{{4.1.4}{13}}
+\@writefile{toc}{\contentsline {paragraph}{Applicability to standard VQ-VAEs.}{13}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.2}The Riemannian Hyperbolic Straight-Through Estimator}{13}{}\protected@file@percent }
+\newlabel{sec:hste_riemannian}{{4.2}{13}}
+\citation{hrqvae}
+\@writefile{toc}{\contentsline {paragraph}{The Problem with Euclidean Conversion.}{14}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{The Riemannian Solution.}{14}{}\protected@file@percent }
+\newlabel{eq:hste_riemannian}{{4.9}{14}}
+\@writefile{toc}{\contentsline {section}{\numberline {4.3}Residual Aggregation}{14}{}\protected@file@percent }
+\newlabel{sec:residagg}{{4.3}{14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3.1}Hyperbolic Distance and Quantization}{14}{}\protected@file@percent }
+\newlabel{sec:hrq}{{4.3.1}{14}}
+\newlabel{eq:prev_residual}{{4.11}{15}}
+\@writefile{toc}{\contentsline {paragraph}{The residual mismatch.}{15}{}\protected@file@percent }
+\newlabel{eq:true_residual}{{4.12}{15}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3.2}The \texttt  {new\_method} Convention}{15}{}\protected@file@percent }
+\newlabel{sec:newmethod}{{4.3.2}{15}}
 \newlabel{eq:left_cancel}{{4.13}{15}}
 \newlabel{eq:hrq_residual}{{4.14}{15}}
-\@writefile{toc}{\contentsline {chapter}{\numberline {5}Experiments}{16}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {5}Experiments}{17}{}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {chapter}{\numberline {6}Conclusions}{17}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {6}Conclusions}{18}{}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {chapter}{\numberline {A}Detailed Analysis of Gradient Leakage}{19}{}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\newlabel{app:gradient_leakage}{{A}{19}}
+\@writefile{toc}{\contentsline {section}{\numberline {A.1}Euclidean STE}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Codebook Loss.}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Commitment Loss.}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Reconstruction Loss.}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {A.2}Hyperbolic STE (HSTE)}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Codebook Loss.}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Commitment Loss.}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Reconstruction Loss.}{20}{}\protected@file@percent }
 \bibstyle{plain}
 \bibdata{bibentries}
-\@writefile{toc}{\contentsline {chapter}{\numberline {A}Optional appendix}{18}{}\protected@file@percent }
-\@writefile{lof}{\addvspace {10\p@ }}
-\@writefile{lot}{\addvspace {10\p@ }}
-\gdef \@abspage@last{21}
+\@writefile{toc}{\contentsline {section}{\numberline {A.3}Riemannian HSTE (\texttt  {hste\_riemannian})}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Codebook Loss.}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Commitment Loss.}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Reconstruction Loss.}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Analysis.}{21}{}\protected@file@percent }
+\bibcite{atigh2022hyperbolic}{1}
+\bibcite{gumbelvq}{2}
+\bibcite{straight_through_estimator}{3}
+\bibcite{audiolm}{4}
+\bibcite{bu2025ggball}{5}
+\bibcite{cannon1997hyperbolic}{6}
+\bibcite{progic}{7}
+\bibcite{hvqvae}{8}
+\bibcite{musicgen}{9}
+\bibcite{talkplay}{10}
+\bibcite{encodec}{11}
+\bibcite{ganea2018hyperbolic}{12}
+\bibcite{girish2026prosody}{13}
+\bibcite{hypervq}{14}
+\bibcite{originalvq}{15}
+\bibcite{khrulkov2020hyperbolic}{16}
+\bibcite{resgen}{17}
+\bibcite{collapse_1}{18}
+\bibcite{lee2022rqvae}{19}
+\bibcite{li2026llsdr}{20}
+\bibcite{evotok}{21}
+\bibcite{mathieu2019poincare}{22}
+\bibcite{finitescalarquantizationfsq}{23}
+\bibcite{mettes2024hyperbolic}{24}
+\bibcite{nickel2017poincare}{25}
+\bibcite{petermann2023hyperbolic}{26}
+\bibcite{hrqvae}{27}
+\bibcite{tiger}{28}
+\bibcite{collapse_2}{29}
+\bibcite{sala2018representation}{30}
+\bibcite{su2026ultralow}{31}
+\bibcite{hqvae}{32}
+\bibcite{ddbc}{33}
+\bibcite{ungar2009gyrovector}{34}
+\bibcite{vqvae}{35}
+\bibcite{r3vae}{36}
+\bibcite{wang2026varlenrec}{37}
+\bibcite{wu2026quantizer}{38}
+\bibcite{hyprqvae_recsys}{39}
+\bibcite{vqnew}{40}
+\bibcite{yao2026zeroshot}{41}
+\bibcite{ye2026hierarchical}{42}
+\bibcite{soundstream}{43}
+\gdef \@abspage@last{27}

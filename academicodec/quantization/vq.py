@@ -60,7 +60,15 @@ class ResidualVectorQuantizer(nn.Module):
             approx: bool=False,
             hste: bool=False,
             hste_riemannian: bool=False,
+            gyration_only: bool=False,
+            block_hste: bool=False,
+            block_hste_pt: bool=False,
             gradient_correction: bool=False,
+            encoder_scale: float=1.0,
+            encoder_shell: float=0.0,
+            code_max_radius: float=0.0,
+            embed_init_scale: float=1.0,
+            tangent_proj: bool=False,
             ):
         super().__init__()
         self.n_q = n_q
@@ -78,7 +86,15 @@ class ResidualVectorQuantizer(nn.Module):
         self.approx = approx
         self.hste = hste
         self.hste_riemannian = hste_riemannian
+        self.gyration_only = gyration_only
+        self.block_hste = block_hste
+        self.block_hste_pt = block_hste_pt
         self.gradient_correction = gradient_correction
+        self.encoder_scale = encoder_scale
+        self.encoder_shell = encoder_shell
+        self.code_max_radius = code_max_radius
+        self.embed_init_scale = embed_init_scale
+        self.tangent_proj = tangent_proj
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_dim=self.codebook_dim,
@@ -99,7 +115,15 @@ class ResidualVectorQuantizer(nn.Module):
             new_method=self.new_method,
             hste=self.hste,
             hste_riemannian=self.hste_riemannian,
-            gradient_correction=self.gradient_correction)
+            gyration_only=self.gyration_only,
+            block_hste=self.block_hste,
+            block_hste_pt=self.block_hste_pt,
+            gradient_correction=self.gradient_correction,
+            encoder_scale=self.encoder_scale,
+            encoder_shell=self.encoder_shell,
+            code_max_radius=self.code_max_radius,
+            embed_init_scale=self.embed_init_scale,
+            tangent_proj=self.tangent_proj)
 
     def forward(self,
                 x: torch.Tensor,

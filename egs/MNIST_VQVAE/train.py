@@ -95,7 +95,7 @@ def get_args():
         help='initialize codebooks using constructive tree embeddings (depth=1)')
     parser.add_argument(
         '--new_method', action='store_true',
-        help='Use left-subtraction encoding with right-associative decoding (default: True)')
+        help='Use left-subtraction encoding with right-associative decoding (default: False)')
     parser.add_argument(
         '--approx', action='store_true',
         help='Track hyperbolic approximation distance (quantized+residual vs input)')
@@ -103,8 +103,19 @@ def get_args():
         '--hste', action='store_true',
         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
     parser.add_argument(
+        '--hste_riemannian', action='store_true',
+        help='Geometry-exact discount: HyperbolicSTE.backward returns the '
+             'Riemannian gradient at x (skips the x lambda_x^2 '
+             'Riemannian->Euclidean re-conversion that explodes near the ball '
+             'boundary). Requires --hste.')
+    parser.add_argument(
         '--gradient_correction', action='store_true',
         help='Detach the residual after each quantization step (gradient correction)')
+    parser.add_argument(
+        '--full_grid', action='store_true',
+        help='Quantize the conv feature map at its true spatial resolution '
+             '(img_size//4: CIFAR 8x8=64, MNIST/EMNIST 7x7=49 tokens) instead '
+             'of collapsing to the legacy 1/4/16 tokens via a Linear bottleneck.')
     # args for training
     parser.add_argument(
         '--N_EPOCHS', type=int, default=50,
@@ -251,7 +262,9 @@ def main():
         new_method=args.new_method,
         approx=args.approx,
         hste=args.hste,
+        hste_riemannian=args.hste_riemannian,
         gradient_correction=args.gradient_correction,
+        full_grid=args.full_grid,
     ).to(device)
     logger.log_info(model)
     total, trainable = _count_params(model)

@@ -289,4 +289,76 @@ The leak \eqref{eq:stack} destabilizes training whenever any of the following ho
 \end{enumerate}
 Setting $A_j := 0$ through the firewall removes all three simultaneously: the sum in \eqref{eq:stack} truncates to its $i=1$ term, the single Riemannian gradient $PT_{q_1\to x}^{\top}\,\nabla_{q_1} L_{rec}$ that the encoder is meant to receive.
 
+\section*{Methods: Why HSTE Without \texttt{new\_method} Did Not Diverge --- The Order of the M\"obius Sums}
+
+The exact HSTE was observed to diverge only in combination with \texttt{new\_method}; the same HSTE applied to the standard residual mode trained without gradient explosion. Since both modes use the identical \texttt{HyperbolicSTE} backward, the identical per-layer losses, and the identical codebooks, the cause must lie in the only two places where the modes differ: the orientation of the residual update and the association order of the M\"obius aggregation. We argue that the residual orientation is provably irrelevant to the magnitudes involved, and that the association order of the sums --- right-fold versus left-fold --- is the decisive structural difference. The argument below is a mechanism analysis: the conformal bookkeeping is exact, while two clearly flagged steps are first-order heuristics consistent with our measurements.
+
+\subsection*{The two compositions}
+With $r_0 = x$ (the encoder output mapped to the ball), the two modes compute, for $i = 1,\dots,N$:
+\begin{center}
+\begin{tabular}{lll}
+ & residual update & aggregation \\
+\texttt{new\_method}: & $r_i = (-q_i) \oplus_c r_{i-1}$ & $out = q_1 \oplus_c \big(q_2 \oplus_c (\cdots \oplus_c q_N)\big)$ \quad (\emph{right fold}) \\
+standard: & $r_i = r_{i-1} \oplus_c (-q_i)$ & $out = \big((q_1 \oplus_c q_2) \oplus_c \cdots\big) \oplus_c q_N$ \quad (\emph{left fold})
+\end{tabular}
+\end{center}
+Define the right fold's intermediate \emph{tails} $t_N = q_N$, $t_i = q_i \oplus_c t_{i+1}$ (so $out = t_1$), and the left fold's intermediate \emph{partial reconstructions} $s_1 = q_1$, $s_i = s_{i-1} \oplus_c q_i$ (so $out = s_N$).
+
+\subsection*{Step 1: The residual orientation is norm-neutral}
+M\"obius addition is gyrocommutative: $a \oplus_c b = \text{gyr}[a, b](b \oplus_c a)$, and the gyration $\text{gyr}[a,b]$ is an orthogonal map. Taking $a = -q_i$, $b = r_{i-1}$:
+\begin{equation}
+    \big\|(-q_i) \oplus_c r_{i-1}\big\| \;=\; \big\| r_{i-1} \oplus_c (-q_i) \big\|.
+\end{equation}
+Given the same inputs, the two residual updates produce points at \emph{exactly the same radius}, differing only by a rotation. In particular, the radius-accumulation mechanism that drives deep residuals toward the boundary (the saturation dynamic responsible for $\lambda_r \to \infty$) operates with identical strength in both modes. The forward saturation pressure therefore cannot explain the asymmetry; whatever distinguishes the modes must live in the \emph{backward pass of the aggregation}. This sharpens the question: yes, the order of the sums is the right place to look.
+
+\subsection*{Step 2: Differentials of a M\"obius fold}
+Two facts about the Jacobians of $w = a \oplus_c b$ organize everything. First, the left translation $L_a : b \mapsto a \oplus_c b$ is an \emph{isometry} of the ball, and its differential is exactly conformal:
+\begin{equation}\label{eq:dL}
+    D_2 \oplus_c (a, b) \;=\; dL_a\big|_b \;=\; \frac{\lambda_b}{\lambda_{a \oplus_c b}}\, \text{gyr}[a, b],
+    \qquad \lambda_z = \frac{2}{1 - c\|z\|^2}.
+\end{equation}
+A pure conformal ratio times a rotation --- no other terms. Second, the right translation $a \mapsto a \oplus_c b$ is \emph{not} an isometry; differentiating the gyrocommutativity identity gives
+\begin{equation}\label{eq:dR}
+    D_1 \oplus_c (a, b) \;=\; \underbrace{\frac{\lambda_a}{\lambda_{a \oplus_c b}}\, \text{gyr}[a,b]\,\text{gyr}[b,a]}_{\text{conformal part}} \;+\; \underbrace{\big(\partial_a \text{gyr}[a, b]\big)(b \oplus_c a)}_{\text{gyration-derivative term}} .
+\end{equation}
+The extra term carries the denominator $d = 1 + 2c\langle a, b\rangle + c^2 \|a\|^2 \|b\|^2$ of the gyration coefficients (the same $d$ whose collapse drove the catastrophic cancellation of Sec.~1). It has an \emph{antipodal pole}: $d \to (1 - c\|a\|\|b\|)^2 \approx 0$ precisely when $a$ and $b$ are both near the boundary \emph{and} anti-aligned. Away from that configuration $d = O(1)$ and $D_1 \oplus_c$ is as tame as $D_2 \oplus_c$.
+
+The key structural observation: \textbf{in the right fold each $q_i$ enters as the \emph{first} argument of its M\"obius addition (the accumulator is the second argument), while in the left fold each $q_i$ enters as the \emph{second} argument (the accumulator is the first).} The backward pass through the accumulator chain and the backward entry into each code are therefore built from different Jacobians in the two modes.
+
+\subsection*{Step 3: The right fold back-propagates through the saturated tails}
+The right fold is not an arbitrary choice: by the left-cancellation law $q \oplus_c \big((-q) \oplus_c r\big) = r$, it is the \emph{exact inverse} of the \texttt{new\_method} residual recursion --- this exactness is the very reason \texttt{new\_method} exists. Unrolling, $r_{i-1} = q_i \oplus_c r_i$, so
+\begin{equation}
+    x = q_1 \oplus_c \big(q_2 \oplus_c ( \cdots \oplus_c (q_N \oplus_c r_N))\big),
+    \qquad
+    out = q_1 \oplus_c \big(q_2 \oplus_c ( \cdots \oplus_c q_N)\big):
+\end{equation}
+$out$ and $x$ are the images of $0$ and $r_N$ under the \emph{same} composition of left translations. The backward chain from $out$ to the tail $t_i$ is a composition of differentials \eqref{eq:dL}, which \emph{telescopes exactly}:
+\begin{equation}\label{eq:telescope}
+    \frac{\partial\, out}{\partial t_i} \;=\; dL_{q_1}\big|_{t_2} \circ \cdots \circ dL_{q_{i-1}}\big|_{t_i}
+    \;=\; \frac{\lambda_{t_i}}{\lambda_{out}}\; R_i, \qquad R_i \text{ orthogonal.}
+\end{equation}
+Every deep layer's reconstruction gradient is therefore carried by the conformal factor \emph{of a tail}. The tails are M\"obius sums of the deep codes only. In the failure regime the deep codes are pinned near the boundary by dead-code revival and are mutually unaligned (each successive residual acquires a $-q$ component, so revival seeds successive codebooks with mutually opposing directions); hyperbolic sums of unaligned vectors \emph{gain} radius at every step (hyperbolic distances to the origin nearly add along generic directions), so even short tails saturate against the projection clip: with margin $\epsilon$, $\lambda_{t} \approx 1/\epsilon$. Two consequences stack multiplicatively on each layer:
+\begin{enumerate}
+    \item \textbf{Entry through the pole.} The entry Jacobian $\partial t_i / \partial q_i = D_1 \oplus_c (q_i, t_{i+1})$ from \eqref{eq:dR} is evaluated at exactly the dangerous configuration: $q_i$ near the boundary, $t_{i+1}$ saturated, and --- because the tail is built from codes seeded by the anti-aligned successors of $q_i$ --- systematically anti-aligned with $q_i$. (This anti-alignment is the first flagged heuristic; it is what our radius/alignment diagnostics show, not an algebraic necessity.) The gyration-derivative term then scales as $1/d \gg 1$ rather than as the benign isometric ratio.
+    \item \textbf{The HSTE hop.} The HSTE backward converts, transports, and reconverts: $\nabla / \lambda_{q_i}^2$, an isometric transport of Euclidean coordinate scale $\lambda_{q_i}/\lambda_{r_{i-1}}$, then $\times \lambda_{r_{i-1}}^2$ --- a net Euclidean gain of $\lambda_{r_{i-1}}/\lambda_{q_i}$. With the residual saturated this is another factor $\approx \lambda_{sat}/\lambda_q$.
+\end{enumerate}
+The gradient delivered through layer $i$ to the encoder thus carries \emph{two independent} powers of the saturated conformal factor --- the $\lambda^2$-type amplification we observed empirically --- and the per-layer transition gain $\rho$ of the compounding analysis (previous section) exceeds $1$, so the deepest paths dominate the path sum and grow geometrically with $N$. Divergence follows within a few steps once any residual saturates. Note the consistency check: \texttt{--encoder\_shell}, which does nothing except bound $\lambda_{r}$ away from $1/\epsilon$, rescues \texttt{new\_method} --- exactly what this mechanism predicts, since \emph{both} divergent factors are powers of $\lambda_{sat}$.
+
+\subsection*{Step 4: The left fold anchors each layer to its bare code}
+In the standard mode every code enters its M\"obius addition as the \emph{second} argument, so its entry differential is the exact isometry differential \eqref{eq:dL}:
+\begin{equation}
+    \frac{\partial s_i}{\partial q_i} \;=\; dL_{s_{i-1}}\big|_{q_i} \;=\; \frac{\lambda_{q_i}}{\lambda_{s_i}}\, \text{gyr}[s_{i-1}, q_i]
+    \qquad \text{--- pole-free by construction.}
+\end{equation}
+The remaining chain $\partial\, out/\partial s_i$ is a product of right-translation differentials \eqref{eq:dR} whose conformal parts telescope just as in \eqref{eq:telescope}, $\prod_{j > i} \lambda_{s_{j-1}}/\lambda_{s_j} = \lambda_{s_i}/\lambda_{out}$, so the intermediate factors \emph{cancel} against the entry factor:
+\begin{equation}
+    \Big\| \frac{\partial\, out}{\partial q_i} \Big\| \;\approx\; \frac{\lambda_{s_i}}{\lambda_{out}} \cdot \frac{\lambda_{q_i}}{\lambda_{s_i}} \;=\; \frac{\lambda_{q_i}}{\lambda_{out}} ,
+\end{equation}
+up to the gyration-derivative corrections of the chain. The reconstruction gradient of every layer is anchored to the conformal factor of its \emph{bare code} --- a single codebook vector, whose radius is bounded (revival pins codes near $0.9 R$, giving $\lambda_q \approx 10$, versus $\lambda_{sat} \approx 1/\epsilon \approx 10^5$ for a saturated tail). The pole-bearing $D_1$ terms do appear in the chain, but they are evaluated at pairs $(s_{j-1}, q_j)$ --- a partial \emph{reconstruction} and a code. The partial reconstructions are trained to approach $x$ and bear no systematic anti-alignment with the next correction code (the second flagged heuristic, again consistent with measurements), so $d = O(1)$ and the corrections stay bounded rotations.
+
+The only unbounded factor remaining in the standard mode is the single HSTE hop $\lambda_{r_{i-1}}/\lambda_{q_i}$ --- \emph{first} order in $\lambda_{sat}$, against \emph{second} order for \texttt{new\_method}. A static first-order amplification produces large but integrable gradients: Adam's per-coordinate normalization absorbs a fixed scale, and what it cannot absorb --- geometric growth across steps --- never starts, because the per-layer aggregation gain stays $O(\lambda_q/\lambda_{out}) \lesssim 1$ and the path-sum ratio $\rho$ stays below the explosion threshold. Indeed, the failure mode actually observed in the standard hyperbolic mode was the \emph{opposite} one: soft gradient death through the saturated $\operatorname{atanh}$ clamps of the distance losses, not explosion.
+
+\subsection*{Verdict}
+So: \textbf{yes, the order of the sums during aggregation is the reason --- in a precise sense.} M\"obius addition is non-associative and non-commutative, so the right fold and the left fold are genuinely different functions, and their backward passes route conformal amplification differently. The right fold of \texttt{new\_method} is exactly the inverse of its own residual recursion; that exactness is its forward-pass virtue, but it is also what wires the residual \emph{tails} --- the objects that saturate, with conformal factors $\sim 1/\epsilon$ and antipodal pole pairings --- directly into every layer's backward path, where they compound with the HSTE transport into a second-order $\lambda^2$ amplification. The standard left fold is the ``wrong'' composition (it inverts nothing, and pays for it with a per-layer gyration error in the forward reconstruction), but precisely because it is not an inverse, its backward pass telescopes through the partial reconstructions and anchors each layer to its bounded bare-code factor, leaving the amplification first-order at worst. Without \texttt{new\_method} we forfeited forward exactness and, in exchange, the backward pass never saw the tails: the model trained worse, but it could not diverge through this channel. The same trade-off explains why bounding the saturation itself (\texttt{--encoder\_shell}) is sufficient to restore \texttt{new\_method}: it removes the $\lambda_{sat}$ powers at their common source rather than rerouting the sums.
+
 \end{document}

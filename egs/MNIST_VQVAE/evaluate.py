@@ -9,7 +9,7 @@ sys.path.insert(0, "/home/acolombo/VAEs/egs/MNIST_VQVAE")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 import matplotlib
@@ -31,6 +31,15 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "emnist", "cifar100"])
     parser.add_argument("--num_samples", type=int, default=1000, help="Number of generated samples for FID")
     parser.add_argument("--batch_size", type=int, default=128)
+    # Test selection — pass one or more flags to run only those tests.
+    # If NONE of these are given, the default suite runs:
+    # robustness + generation + interpretability (rq_transformer stays opt-in).
+    parser.add_argument("--robustness", action="store_true",
+                        help="Run the noise-robustness evaluation")
+    parser.add_argument("--generation", action="store_true",
+                        help="Run frequency-based generation + FID/IS")
+    parser.add_argument("--interpretability", action="store_true",
+                        help="Run latent interpretability (linear probing)")
     # RQ-Transformer generation (Stage 2 from Lee et al. CVPR 2022)
     parser.add_argument("--rq_transformer", action="store_true",
                         help="Train an RQ-Transformer prior on the frozen RQ-VAE codes, then generate samples")
@@ -48,10 +57,22 @@ def get_args():
                         help="Sampling temperature for generation")
     parser.add_argument("--rq_top_k", type=int, default=0,
                         help="Top-k filtering for sampling (0 = disabled)")
+    parser.add_argument("--rq_gen_batch", type=int, default=2048,
+                        help="Batch size for RQ-Transformer sampling. The autoregressive "
+                             "loop is latency-bound, so a large batch amortises the per-step "
+                             "kernel-launch overhead across many samples.")
+    parser.add_argument("--train_fraction", type=float, default=1.0,
+                        help="Use a deterministic random subset of the training set "
+                             "(e.g. 0.1 = 1/10). Keeps per-epoch cost manageable on large "
+                             "datasets like EMNIST byclass (~697k images).")
     return parser.parse_args()
 
 def load_model(args, device):
     checkpoint_dir = os.path.dirname(args.checkpoint)
+    # Evict any previously-imported config so a fresh one is loaded from this
+    # checkpoint dir; Python caches `config` in sys.modules, which would
+    # otherwise silently reuse an earlier checkpoint's config when looping.
+    sys.modules.pop("config", None)
     sys.path.insert(0, checkpoint_dir)
     try:
         import config
@@ -95,12 +116,18 @@ def load_model(args, device):
         size=model_size,
         solution=getattr(config, "solution", False),
         gyration=getattr(config, "gyration", False),
+        full_grid=getattr(config, "full_grid", False),
     ).to(device)
 
     print(f"Loading weights from {args.checkpoint}...")
     ckpt = torch.load(args.checkpoint, map_location=device)
     state_dict = ckpt["model"] if "model" in ckpt else ckpt
-    model.load_state_dict(state_dict)
+    # strict=False tolerates pre-calibration checkpoints that predate the
+    # _enc_scale/_enc_calibrated buffers (default to identity at eval).
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    allowed = {"quantizer.vq._enc_scale", "quantizer.vq._enc_calibrated"}
+    leftover = set(missing) - allowed
+    assert not leftover and not unexpected, f"unexpected key mismatch: missing={leftover} unexpected={unexpected}"
     model.eval()
     return model, config
 
@@ -237,22 +264,27 @@ def generate_and_evaluate(model, config, val_loader, args, device, output_dir):
     gen_prepared = prepare_for_inception(generated_images)
     
     if HAS_TORCHMETRICS:
+        # Compute FID and IS independently so a failure in one still leaves the other.
         try:
-            fid = FrechetInceptionDistance(feature=2048, normalize=False)
-            fid.update(real_prepared, real=True)
-            fid.update(gen_prepared, real=False)
+            fid = FrechetInceptionDistance(feature=2048, normalize=False).to(device)
+            for i in range(0, real_prepared.size(0), args.batch_size):
+                fid.update(real_prepared[i:i + args.batch_size].to(device), real=True)
+            for i in range(0, gen_prepared.size(0), args.batch_size):
+                fid.update(gen_prepared[i:i + args.batch_size].to(device), real=False)
             fid_score = fid.compute().item()
             print(f"FID Score: {fid_score:.4f}")
-            
-            # IS
+        except Exception as e:
+            print(f"Failed to compute FID: {e}")
+
+        try:
             # IS expects uint8 [0, 255] if normalize=False
-            inception = InceptionScore(normalize=False)
-            inception.update(gen_prepared)
+            inception = InceptionScore(normalize=False).to(device)
+            for i in range(0, gen_prepared.size(0), args.batch_size):
+                inception.update(gen_prepared[i:i + args.batch_size].to(device))
             is_mean, is_std = inception.compute()
             print(f"Inception Score: {is_mean.item():.4f} \u00b1 {is_std.item():.4f}")
-            
         except Exception as e:
-            print(f"Failed to compute FID/IS: {e}")
+            print(f"Failed to compute IS: {e}")
     else:
         print("Skipping FID and IS calculation: 'torchmetrics' is not installed.")
         print("To compute metrics, please run: pip install torchmetrics")
@@ -265,16 +297,10 @@ def train_and_generate_rq_transformer(model, config, train_loader, args, device,
     print("Stage 2: RQ-Transformer (Lee et al. CVPR 2022)")
     print("=" * 60)
 
-    # Determine spatial sequence length
-    dataset = getattr(config, "dataset", args.dataset)
-    if dataset == "mnist":
-        T = 1
-    elif dataset == "emnist":
-        T = 4
-    elif dataset == "cifar100":
-        T = 16
-    else:
-        T = 1
+    # Spatial sequence length = number of code tokens the encoder produces.
+    # Derive it from the model so it tracks the architecture (legacy 1/4/16 or
+    # full_grid 49/49/64) instead of hard-coding per dataset.
+    T = model.frame_rate
 
     n_q = config.n_q
     bins = config.bins
@@ -296,26 +322,50 @@ def train_and_generate_rq_transformer(model, config, train_loader, args, device,
     rq_optimizer = torch.optim.AdamW(rq_model.parameters(), lr=args.rq_transformer_lr)
     rq_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(rq_optimizer, T_max=args.rq_transformer_epochs)
 
+    # The VQ-VAE is frozen, so the codes are identical every epoch. Encode the
+    # whole dataset once and train directly on the cached integer codes, instead
+    # of re-running the encoder + RVQ on every batch of every epoch.
+    print("Encoding dataset into codes (one-time)...")
+    model.eval()
+    cached_codes = []
+    with torch.no_grad():
+        for imgs, _ in tqdm(train_loader, desc="Encoding codes", leave=False):
+            imgs = imgs.to(device)
+            codes = model.encode(imgs)            # (n_q, B, N)
+            codes = codes.permute(1, 2, 0)        # (B, N, n_q) = (B, T, D)
+            cached_codes.append(codes)
+    # Keep the full code tensor on-device (a few tens of MB) to avoid per-batch
+    # host->device transfers; fall back to CPU if it does not fit.
+    try:
+        cached_codes = torch.cat(cached_codes, dim=0).contiguous()        # (N, T, D)
+    except RuntimeError:
+        cached_codes = torch.cat([c.cpu() for c in cached_codes], dim=0).contiguous()
+    n_total = cached_codes.size(0)
+    print(f"  cached codes: {tuple(cached_codes.shape)} on {cached_codes.device}")
+
+    use_amp = device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
     best_rq_loss = float("inf")
     for rq_epoch in tqdm(range(1, args.rq_transformer_epochs + 1), desc="RQ-Transformer"):
         rq_model.train()
         epoch_loss, epoch_n = 0.0, 0
 
-        for imgs, _ in train_loader:
-            imgs = imgs.to(device)
-            with torch.no_grad():
-                codes = model.encode(imgs)  # (n_q, B, N)
+        perm = torch.randperm(n_total, device=cached_codes.device)
+        for i in range(0, n_total, args.batch_size):
+            idx = perm[i:i + args.batch_size]
+            codes = cached_codes[idx].to(device, non_blocking=True)  # (B, T, D)
 
-            # Reshape to (B, T, D) where T=N spatial positions, D=n_q depths
-            codes = codes.permute(1, 2, 0)  # (B, N, n_q) = (B, T, D)
-
-            logits = rq_model(codes)  # (B, T, D, K)
-            loss = F.cross_entropy(logits.reshape(-1, bins), codes.reshape(-1))
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                logits = rq_model(codes)  # (B, T, D, K)
+                loss = F.cross_entropy(logits.reshape(-1, bins), codes.reshape(-1))
 
             rq_optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(rq_optimizer)
             torch.nn.utils.clip_grad_norm_(rq_model.parameters(), 1.0)
-            rq_optimizer.step()
+            scaler.step(rq_optimizer)
+            scaler.update()
 
             epoch_loss += loss.item()
             epoch_n += 1
@@ -342,7 +392,7 @@ def train_and_generate_rq_transformer(model, config, train_loader, args, device,
     remaining = args.num_samples
     with torch.no_grad():
         while remaining > 0:
-            batch_n = min(remaining, args.batch_size)
+            batch_n = min(remaining, args.rq_gen_batch)
             sampled_codes = rq_model.generate(
                 n_samples=batch_n, device=device,
                 temperature=args.rq_temperature, top_k=args.rq_top_k,
@@ -380,19 +430,26 @@ def train_and_generate_rq_transformer(model, config, train_loader, args, device,
         real_prepared = prepare_for_inception(real_images)
         gen_prepared = prepare_for_inception(generated_images[:args.num_samples])
 
+        # Compute FID and IS independently so a failure in one still leaves the other.
         try:
-            fid = FrechetInceptionDistance(feature=2048, normalize=False)
-            fid.update(real_prepared, real=True)
-            fid.update(gen_prepared, real=False)
+            fid = FrechetInceptionDistance(feature=2048, normalize=False).to(device)
+            for i in range(0, real_prepared.size(0), args.batch_size):
+                fid.update(real_prepared[i:i + args.batch_size].to(device), real=True)
+            for i in range(0, gen_prepared.size(0), args.batch_size):
+                fid.update(gen_prepared[i:i + args.batch_size].to(device), real=False)
             fid_score = fid.compute().item()
             print(f"RQ-Transformer FID: {fid_score:.4f}")
+        except Exception as e:
+            print(f"Failed to compute RQ-Transformer FID: {e}")
 
-            inception = InceptionScore(normalize=False)
-            inception.update(gen_prepared)
+        try:
+            inception = InceptionScore(normalize=False).to(device)
+            for i in range(0, gen_prepared.size(0), args.batch_size):
+                inception.update(gen_prepared[i:i + args.batch_size].to(device))
             is_mean, is_std = inception.compute()
             print(f"RQ-Transformer IS: {is_mean.item():.4f} ± {is_std.item():.4f}")
         except Exception as e:
-            print(f"Failed to compute FID/IS: {e}")
+            print(f"Failed to compute RQ-Transformer IS: {e}")
 
 
 def evaluate_latent_interpretability(model, config, train_loader, val_loader, device, output_dir):
@@ -487,6 +544,9 @@ def evaluate_latent_interpretability(model, config, train_loader, val_loader, de
 def main():
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Enable TF32 matmuls on A100 (free speedup for the transformer matmuls).
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cudnn.allow_tf32 = True
     
     # Resolve the absolute path of the checkpoint to correctly determine the output directory
     # if not os.path.isabs(args.checkpoint):
@@ -507,17 +567,40 @@ def main():
         train_data = datasets.CIFAR100(root=args.data_dir, train=True, download=True, transform=transform)
         val_data = datasets.CIFAR100(root=args.data_dir, train=False, download=True, transform=transform)
     
+    # Optionally train on a deterministic random subset (e.g. EMNIST byclass is
+    # ~697k images; --train_fraction 0.1 keeps RQ-Transformer epochs ~MNIST-fast).
+    if args.train_fraction < 1.0:
+        n_total = len(train_data)
+        n_keep = int(n_total * args.train_fraction)
+        g = torch.Generator().manual_seed(0)
+        idx = torch.randperm(n_total, generator=g)[:n_keep].tolist()
+        train_data = Subset(train_data, idx)
+        print(f"Subsampled training set to {n_keep}/{n_total} "
+              f"({args.train_fraction:.2%}) for training.")
+
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
     
     model, config = load_model(args, device)
 
-    if args.rq_transformer:
-        train_and_generate_rq_transformer(model, config, train_loader, args, device, output_dir)
-    else:
+    # Decide which tests to run. If no selection flag is passed, run the
+    # default suite (everything except the opt-in RQ-Transformer).
+    run_robustness = args.robustness
+    run_generation = args.generation
+    run_interpretability = args.interpretability
+    run_rq_transformer = args.rq_transformer
+
+    if not (run_robustness or run_generation or run_interpretability or run_rq_transformer):
+        run_robustness = run_generation = run_interpretability = True
+
+    if run_robustness:
         evaluate_robustness(model, val_loader, device, output_dir)
+    if run_generation:
         generate_and_evaluate(model, config, val_loader, args, device, output_dir)
+    if run_interpretability:
         evaluate_latent_interpretability(model, config, train_loader, val_loader, device, output_dir)
+    if run_rq_transformer:
+        train_and_generate_rq_transformer(model, config, train_loader, args, device, output_dir)
 
 if __name__ == "__main__":
     main()

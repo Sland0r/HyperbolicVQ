@@ -308,8 +308,8 @@ def get_args():
         action='store_true',
         help='Use pure differential geometry approach with parallel transport')
     parser.add_argument(
-        '--new_method', action=argparse.BooleanOptionalAction, default=True,
-        help='Use left-subtraction encoding with right-associative decoding (default: True)')
+        '--new_method', action='store_true',
+        help='Use left-subtraction encoding with right-associative decoding (default: False)')
     parser.add_argument(
         '--approx', action='store_true',
         help='Track hyperbolic approximation distance (quantized+residual vs input)')
@@ -317,8 +317,66 @@ def get_args():
         '--hste', action='store_true',
         help='Use hyperbolic straight-through estimator instead of Euclidean STE')
     parser.add_argument(
+        '--hste_riemannian', action='store_true',
+        help='Geometry-exact discount: HyperbolicSTE.backward returns the Riemannian gradient at x. Requires --hste.')
+    parser.add_argument(
         '--gradient_correction', action='store_true',
         help='Detach the residual after each quantization step (gradient correction)')
+    parser.add_argument(
+        '--embed_init_scale', type=float, default=1.0,
+        help='Scale factor for embedding initialization')
+    parser.add_argument(
+        '--gyration_only', action='store_true',
+        help='(with --hste) HSTE backward = pure gyration transport of the gradient '
+             'from q to x: geometric direction correction, NO conformal lambda '
+             '("gamma") coefficients anywhere, Euclidean magnitude preserved exactly. '
+             'Takes precedence over --hste_riemannian.')
+    parser.add_argument(
+        '--block_hste', action='store_true',
+        help='(c>0) One identity STE wrapping the whole RVQ block in tangent space; '
+             'per-layer codes are detached. Decoder gradient reaches the encoder '
+             'with factor exactly 1. Needs --tangent_proj when codebook_dim != D.')
+    parser.add_argument(
+        '--block_hste_pt', action='store_true',
+        help='(c>0) Like --block_hste, but the single block-level hop is a '
+             'HyperbolicSTE transport on the ball from the full Mobius sum Q back '
+             'to the initial residual r0 (applied before project_out/log_map0, so '
+             'no --tangent_proj restriction). Per-layer codes are detached. The '
+             'STE lie d(Q, r0) = d(r_N, 0) equals the last-layer quantization '
+             'error; net conformal gain is the endpoint ratio lambda_r0/lambda_Q. '
+             '--hste_riemannian/--gyration_only apply to the hop. '
+             'Mutually exclusive with --block_hste.')
+    parser.add_argument(
+        '--tangent_proj', action='store_true',
+        help='(c>0 only) Put the codebook_dim bottleneck as a Euclidean nn.Linear '
+             'BEFORE exp_map0 (and after log_map0), so exp_map/codebooks/quantization '
+             'live in the low-dim Poincare ball. No hyperbolic HLinear layers.')
+    parser.add_argument(
+        '--init_scale', type=float, default=1.0,
+        help='Scale factor for constructive initialization')
+    parser.add_argument(
+        '--compile', action='store_true',
+        help='Wrap model in torch.compile to fuse hyperbolic kernels')
+    parser.add_argument(
+        '--encoder_scale', type=float, default=1.0,
+        help='Scale applied to the tangent vector before exp_map0 (c>0 only). '
+             '>1 pushes hyperbolic residuals off the origin so the nearest-code '
+             'argmax can discriminate by direction (fixes val codebook collapse). '
+             '<=0 enables one-time first-batch auto-calibration: a single global '
+             'scale is fitted so the median residual lands at radius 0.5 (interior), '
+             'then frozen. Keeps per-vector magnitude variation, unlike --encoder_shell.')
+    parser.add_argument(
+        '--encoder_shell', type=float, default=0.0,
+        help='If >0 (c>0 only), L2-normalise each encoder output so exp_map0 lands '
+             'on a fixed ball-radius = encoder_shell/sqrt(c). Removes the magnitude '
+             'DOF so the encoder cannot collapse residuals to the origin. Takes '
+             'precedence over --encoder_scale.')
+    parser.add_argument(
+        '--code_max_radius', type=float, default=0.0,
+        help='If >0 (c>0 only), cap codebook embeddings at this fraction of the '
+             'ball radius. Keeps codes off the boundary, where hyperbolic_distance_sq '
+             'saturates its atanh clamp and zeroes the commit/codebook gradients '
+             '(the cause of hyperbolic codebook collapse).')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -378,8 +436,12 @@ def main_worker(local_rank, args):
                               ratios=args.ratios, decay=args.decay,
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
-                              codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste,
-                              gradient_correction=args.gradient_correction)
+                              codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste, hste_riemannian=args.hste_riemannian,
+                              gyration_only=args.gyration_only, block_hste=args.block_hste,
+                              block_hste_pt=args.block_hste_pt,
+                              gradient_correction=args.gradient_correction, encoder_scale=args.encoder_scale,
+                              encoder_shell=args.encoder_shell, code_max_radius=args.code_max_radius,
+                              embed_init_scale=args.embed_init_scale, tangent_proj=args.tangent_proj)
     #print(soundstream)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -423,7 +485,7 @@ def main_worker(local_rank, args):
             torch.autograd.set_detect_anomaly(False)
 
         # Skip root (index 0, at origin); keep the bins children
-        code_points = embeddings[1:].to(dtype=torch.float32) / _n_q  # (bins, D)
+        code_points = embeddings[1:].to(dtype=torch.float32) * (args.init_scale / _n_q)  # (bins, D)
         assert code_points.shape == (_bins, _D), \
             f"Expected ({_bins}, {_D}), got {code_points.shape}"
 
@@ -447,6 +509,11 @@ def main_worker(local_rank, args):
         msd = torch.nn.SyncBatchNorm.convert_sync_batchnorm(msd)
         mpd = torch.nn.SyncBatchNorm.convert_sync_batchnorm(mpd)
     # torch.distributed.barrier()
+    if getattr(args, 'compile', False):
+        soundstream = torch.compile(soundstream)
+        stft_disc = torch.compile(stft_disc)
+        msd = torch.compile(msd)
+        mpd = torch.compile(mpd)
     args.device = torch.device('cuda', args.local_rank)
     soundstream.to(args.device)
     stft_disc.to(args.device)
@@ -720,7 +787,7 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                         last_layer=last_layer,
                         is_training=True,
                         args=args)
-                    train_commit_loss += commit_loss
+                    train_commit_loss += commit_loss.item()
                     train_loss_g += total_loss_g.item()
                     train_adv_g_loss += adv_g_loss.item()
                     train_feat_loss += feat_loss.item()
@@ -834,8 +901,8 @@ def train(args, soundstream, stft_disc, msd, mpd, train_loader, valid_loader,
                 if args.distributed:
                     dist.all_reduce(train_codes_hist, op=dist.ReduceOp.SUM)
                 probs = train_codes_hist / train_codes_hist.sum(dim=-1, keepdim=True).clamp_min(1e-10)
-            entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
-            train_ppl_whole = torch.exp2(entropy).tolist()
+                entropy = -(probs * torch.log2(probs + 1e-10)).sum(dim=-1)
+                train_ppl_whole = torch.exp2(entropy).tolist()
 
             train_ppl_last10 = []
             if train_codes_hist_last10 is not None and total_train_codes_last10 > 0:

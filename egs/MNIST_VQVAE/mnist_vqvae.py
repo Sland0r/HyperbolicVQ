@@ -18,9 +18,35 @@ class Encoder(nn.Module):
     Final output is reshaped to (B, D, N) where N = 4×4 = 16.
     """
 
-    def __init__(self, D: int = 128, in_channels: int = 1, img_size: int = 28, size: str = 'small'):
+    def __init__(self, D: int = 128, in_channels: int = 1, img_size: int = 28,
+                 size: str = 'small', full_grid: bool = False):
         super().__init__()
         self.size = size
+        self.full_grid = full_grid
+
+        if full_grid:
+            # Quantize the conv feature map directly at its true spatial
+            # resolution (img_size // 4): 32 -> 8×8 = 64 tokens, 28 -> 7×7 = 49.
+            # No bottleneck: each spatial position becomes one code token.
+            self.spatial_h = img_size // 4
+            self.spatial_w = img_size // 4
+            self.num_tokens = self.spatial_h * self.spatial_w
+            self.bottleneck = None
+            self.net = nn.Sequential(
+                nn.Conv2d(in_channels, 32, kernel_size=4, stride=2, padding=1),  # H/2
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),           # H/4
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),          # H/4
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, D, kernel_size=1),                               # (B, D, H/4, W/4)
+            )
+            return
+
+        # ── Legacy architecture: bottleneck collapses to N=1/4/16 tokens ──
         # The third conv uses k=3 for 28×28 (7→4) and k=4 for 32×32 (8→4)
         k3 = 3 if img_size == 28 else 4
         self.net = nn.Sequential(
@@ -35,19 +61,27 @@ class Encoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, D, kernel_size=1), # (B, D, 4, 4)
         )
-        
+
         self.spatial_h = 4
         self.spatial_w = 4
         if size == 'small':
+            self.num_tokens = 1
             self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D)
         elif size == 'medium':
+            self.num_tokens = 4
             self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D * 2 * 2)
         elif size == 'large':
+            self.num_tokens = 16
             self.bottleneck = nn.Linear(D * self.spatial_h * self.spatial_w, D * 4 * 4)
         else:
             raise ValueError(f"Unknown size: {size}")
 
     def forward(self, x):
+        if self.full_grid:
+            z = self.net(x)                 # (B, D, H, W)
+            B, D, H, W = z.shape
+            return z.reshape(B, D, H * W)   # (B, D, N) with N = H*W
+
         z = self.net(x)  # (B, D, 4, 4)
         B, D, H, W = z.shape
         z = z.reshape(B, D * H * W)  # (B, D * N) with N=16
@@ -67,8 +101,30 @@ class Decoder(nn.Module):
     Takes (B, D, N), reshapes to (B, D, 4, 4), upsamples back to original size.
     """
 
-    def __init__(self, D: int = 128, out_channels: int = 1, img_size: int = 28, size: str = 'small'):
+    def __init__(self, D: int = 128, out_channels: int = 1, img_size: int = 28,
+                 size: str = 'small', full_grid: bool = False):
         super().__init__()
+        self.full_grid = full_grid
+
+        if full_grid:
+            # Mirror the full-grid encoder: reshape (B, D, N) -> (B, D, H, W) at
+            # H = W = img_size // 4, then two stride-2 upsamples back to img_size.
+            self.spatial_h = img_size // 4
+            self.spatial_w = img_size // 4
+            self.bottleneck = None
+            self.net = nn.Sequential(
+                nn.Conv2d(D, 128, kernel_size=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),          # H*2
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(64, out_channels, kernel_size=4, stride=2, padding=1),  # H*4
+                nn.Sigmoid(),
+            )
+            return
+
+        # ── Legacy architecture ──
         self.spatial_h = 4
         self.spatial_w = 4
         # First transposed conv uses k=3 for 28×28 (4→7) and k=4 for 32×32 (4→8)
@@ -96,6 +152,11 @@ class Decoder(nn.Module):
         )
 
     def forward(self, z):
+        if self.full_grid:
+            B, D, N = z.shape
+            z = z.reshape(B, D, self.spatial_h, self.spatial_w)
+            return self.net(z)
+
         B, D, N = z.shape
         z = z.reshape(B, D * N)
         z = self.bottleneck(z).reshape(B, D, self.spatial_h, self.spatial_w) # (B, D, 4, 4)
@@ -141,10 +202,12 @@ class VQVAE2D(nn.Module):
         new_method: bool = True,
         approx: bool = False,
         hste: bool = False,
+        hste_riemannian: bool = False,
         gradient_correction: bool = False,
+        full_grid: bool = False,
     ):
         super().__init__()
-        self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size, size=size)
+        self.encoder = Encoder(D=D, in_channels=in_channels, img_size=img_size, size=size, full_grid=full_grid)
         self.quantizer = ResidualVectorQuantizer(
             dimension=D,
             n_q=n_q,
@@ -161,20 +224,17 @@ class VQVAE2D(nn.Module):
             new_method=new_method,
             approx=approx,
             hste=hste,
+            hste_riemannian=hste_riemannian,
             gradient_correction=gradient_correction,
         )
-        self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size)
+        self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size, full_grid=full_grid)
         self.exponential_lambda = exponential_lambda
         self.uniform = uniform
 
-        if size == 'small':
-            self.frame_rate = 1
-        elif size == 'medium':
-            self.frame_rate = 4
-        elif size == 'large':
-            self.frame_rate = 16
-        else:
-            raise ValueError(f"Unknown size: {size}")
+        # Number of code tokens per image (= spatial positions). Used as the
+        # "frame_rate" bandwidth label by the quantizer; with full_grid this is
+        # the true feature-map resolution (CIFAR 64, MNIST/EMNIST 49).
+        self.frame_rate = self.encoder.num_tokens
 
         self.n_q = n_q
         self.target_bandwidths = [
@@ -325,26 +385,28 @@ class RQTransformer(nn.Module):
         spatial_mask = self._causal_mask(T, device)
         h = self.spatial_transformer(spatial_input, mask=spatial_mask)  # (B, T, E)
 
-        # Depth transformer at each position
-        all_logits = []
+        # Depth transformer for every spatial position at once. The D depth inputs
+        # at position t are independent given h_t, so fold T into the batch dim and
+        # run the depth transformer a single time on (B*T, D, E) instead of looping
+        # over t. Inputs:  v_{t,0} = depth_pos[0] + h_t
+        #                  v_{t,d} = depth_pos[d] + sum of code embeds at depths < d
         depth_pos = self.depth_pos_embed(torch.arange(D, device=device))  # (D, E)
+        code_embeds = self.code_embed(codes)  # (B, T, D, E)
 
-        for t in range(T):
-            # Build depth input: v_{t,1} = depth_pos[0] + h_t
-            # v_{t,d} = depth_pos[d] + sum of code embeds at depths 1..d-1
-            context = h[:, t]  # (B, E)
-            code_embeds_t = self.code_embed(codes[:, t])  # (B, D, E)
+        # prev_sum[..., d] = sum of code embeds over depths 0..d-1 (0 at d=0).
+        prev_sum = torch.zeros_like(code_embeds)
+        prev_sum[:, :, 1:] = code_embeds.cumsum(dim=2)[:, :, :-1]
+        depth_input = prev_sum + depth_pos.view(1, 1, D, self.embed_dim)
 
-            depth_input = torch.zeros(B, D, self.embed_dim, device=device)
-            depth_input[:, 0] = depth_pos[0] + context
-            for d in range(1, D):
-                depth_input[:, d] = depth_pos[d] + code_embeds_t[:, :d].sum(dim=1)
+        # Add the spatial context h_t only at depth 0 (not in-place on the graph).
+        spatial_ctx = torch.zeros_like(depth_input)
+        spatial_ctx[:, :, 0] = h
+        depth_input = depth_input + spatial_ctx
 
-            depth_mask = self._causal_mask(D, device)
-            depth_out = self.depth_transformer(depth_input, mask=depth_mask)  # (B, D, E)
-            all_logits.append(self.head(depth_out))  # (B, D, K)
-
-        logits = torch.stack(all_logits, dim=1)  # (B, T, D, K)
+        depth_input = depth_input.reshape(B * T, D, self.embed_dim)
+        depth_mask = self._causal_mask(D, device)
+        depth_out = self.depth_transformer(depth_input, mask=depth_mask)  # (B*T, D, E)
+        logits = self.head(depth_out).view(B, T, D, self.codebook_size)
         return logits
 
     @torch.no_grad()
@@ -362,26 +424,31 @@ class RQTransformer(nn.Module):
         B, T, D = n_samples, self.n_positions, self.n_depths
         codes = torch.zeros(B, T, D, dtype=torch.long, device=device)
 
+        depth_pos = self.depth_pos_embed(torch.arange(D, device=device))  # (D, E)
         for t in range(T):
-            # Rebuild spatial input up to position t
+            # Rebuild spatial input up to position t. Position 0 is the SOS token;
+            # position k (1..t) sums the code embeds of the already-sampled
+            # position k-1, added to its spatial positional embedding.
+            pos = self.spatial_pos_embed(torch.arange(t + 1, device=device))  # (t+1, E)
             spatial_input = torch.zeros(B, t + 1, self.embed_dim, device=device)
-            pos = self.spatial_pos_embed(torch.arange(t + 1, device=device))
             spatial_input[:, 0] = self.sos_embed + pos[0]
-            for prev_t in range(1, t + 1):
-                prev_embeds = self.code_embed(codes[:, prev_t - 1]).sum(dim=1)  # (B, E)
-                spatial_input[:, prev_t] = prev_embeds + pos[prev_t]
+            if t > 0:
+                prev_embeds = self.code_embed(codes[:, :t]).sum(dim=2)  # (B, t, E)
+                spatial_input[:, 1:] = prev_embeds + pos[1:].unsqueeze(0)
 
             spatial_mask = self._causal_mask(t + 1, device)
             h = self.spatial_transformer(spatial_input, mask=spatial_mask)
             context = h[:, t]  # (B, E)
 
-            # Depth transformer: predict D codes one by one
-            depth_pos = self.depth_pos_embed(torch.arange(D, device=device))
+            # Depth transformer: predict D codes one by one. At depth step d the
+            # codes at depths 0..d-1 are known; v_{k} = depth_pos[k] + sum of code
+            # embeds over depths < k, with the spatial context added at depth 0.
             for d in range(D):
-                depth_input = torch.zeros(B, d + 1, self.embed_dim, device=device)
+                depth_input = depth_pos[:d + 1].unsqueeze(0).expand(B, d + 1, self.embed_dim).clone()
                 depth_input[:, 0] = depth_pos[0] + context
-                for prev_d in range(1, d + 1):
-                    depth_input[:, prev_d] = depth_pos[prev_d] + self.code_embed(codes[:, t, :prev_d]).sum(dim=1)
+                if d > 0:
+                    known = self.code_embed(codes[:, t, :d])  # (B, d, E) depths 0..d-1
+                    depth_input[:, 1:] = depth_input[:, 1:] + known.cumsum(dim=1)
 
                 depth_mask = self._causal_mask(d + 1, device)
                 depth_out = self.depth_transformer(depth_input, mask=depth_mask)

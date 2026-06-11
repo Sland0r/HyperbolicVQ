@@ -29,6 +29,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 """Core vector quantization implementation."""
+import math
 import typing as tp
 
 import torch
@@ -82,6 +83,18 @@ def parallel_transport_1(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: f
     STE backward pass hits. This closed form is a single clamped division and
     stays an exact isometry there. Needs no geoopt internals.
     """
+    gyr = gyration_transport(x, y, v, c)
+
+    lam_x = conformal_factor(x, c)
+    lam_y = conformal_factor(y, c)
+    ratio = (lam_x / lam_y).clamp(min=1e-6)
+    return ratio * gyr
+
+
+def gyration_transport(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: float) -> torch.Tensor:
+    """gyr[y, ⊖x] v — the rotation part of PT_{x->y}, WITHOUT the conformal
+    λ_x/λ_y coefficient. Gyrations are orthogonal maps, so this preserves the
+    EUCLIDEAN norm of v exactly (used by the --gyration_only STE backward)."""
     diff = y - x
     x_sq = x.pow(2).sum(dim=-1, keepdim=True)
     y_sq = y.pow(2).sum(dim=-1, keepdim=True)
@@ -90,31 +103,26 @@ def parallel_transport_1(x: torch.Tensor, y: torch.Tensor, v: torch.Tensor, c: f
     diff_w = yw - xw
     x_diff = (x * diff).sum(dim=-1, keepdim=True)
     diff_sq = diff.pow(2).sum(dim=-1, keepdim=True)
-    
+
     c2 = c * c
-    
+
     # Numerator terms
     a = -c2 * yw * x_sq - c * xw + 2 * c2 * (x_sq + x_diff) * xw
     b = c2 * xw * y_sq - c * yw
     a_plus_b = a + b
-    
+
     # Stabilized difference avoiding catastrophic cancellation when y is close to x
     a_minus_b = c * (1 - c * x_sq) * diff_w - c2 * xw * diff_sq
-    
+
     # Algebraically equivalent to a * y + b * (-x) but numerically stable
     num = 0.5 * a_plus_b * diff + 0.5 * a_minus_b * (y + x)
-    
+
     # Stabilized denominator avoiding cancellation
     one_minus_c_x_sq = 1 - c * x_sq
     d = one_minus_c_x_sq.pow(2) - 2 * c * one_minus_c_x_sq * x_diff + c2 * x_sq * diff_sq
     d = d.clamp_min(1e-15)
-    
-    gyr = v + 2 * num / d
 
-    lam_x = conformal_factor(x, c)
-    lam_y = conformal_factor(y, c)
-    ratio = (lam_x / lam_y).clamp(min=1e-6)
-    return ratio * gyr
+    return v + 2 * num / d
 
 
 import sys
@@ -273,21 +281,34 @@ def einstein_midpoint(z, w, c):
 class HyperbolicSTE(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, q, c, riemannian=False):
+    def forward(ctx, x, q, c, riemannian=False, gyration_only=False):
         ctx.save_for_backward(x, q)
         ctx.c = c
         ctx.riemannian = riemannian
+        ctx.gyration_only = gyration_only
         return q
 
     @staticmethod
     def backward(ctx, grad_output):
         x, q = ctx.saved_tensors
         c = ctx.c
+
+        if ctx.gyration_only:
+            # Pure gyration transport: rotate the gradient from q to x the way the
+            # geometry dictates, but drop ALL conformal (lambda/"gamma") coefficients
+            # — no /lambda_q^2 conversion, no PT lambda_q/lambda_x ratio, no
+            # *lambda_x^2 reconversion. Gyrations are orthogonal, so the Euclidean
+            # gradient magnitude is preserved exactly (like the Euclidean STE, which
+            # trains); only the direction is hyperbolically corrected.
+            return (gyration_transport(q, x, grad_output, c),
+                    None, None, None, None)
+
         # conformal factors (clamp c*||.||^2, not the raw norm — correct for all c)
         cq2 = (c * q.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
         cx2 = (c * x.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
         lambda_q = 2 / (1 - cq2)
         lambda_x_ = 2 / (1 - cx2)
+
         # Euclidean -> Riemannian
         grad_r = grad_output / (lambda_q ** 2)
         # transport tangent vector (exact Poincaré-ball PT, an isometry)
@@ -306,7 +327,7 @@ class HyperbolicSTE(torch.autograd.Function):
             # Riemannian -> Euclidean (standard STE; ×λ_x² amplifies near boundary)
             grad_x = grad_r_at_x * (lambda_x_ ** 2)
 
-        return grad_x, None, None, None
+        return grad_x, None, None, None, None
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     if val == 0:
@@ -399,16 +420,28 @@ class EuclideanCodebook(nn.Module):
             threshold_ema_dead_code: int=2,
             c: float=0.,
             ema: bool=True,
-            gyration_weight: float=0., ):
+            gyration_weight: float=0.,
+            code_max_radius: float=0.,
+            embed_init_scale: float=1.0, ):
         super().__init__()
         self.c = c
         self.decay = decay
         self.ema = ema
         self.gyration_weight = gyration_weight
+        # If >0 (c>0 only), cap codebook embeddings at this fraction of the ball
+        # radius. Keeps codes off the boundary, where hyperbolic_distance_sq's
+        # atanh clamp saturates and zeroes the commit/codebook-loss gradients.
+        self.code_max_radius = code_max_radius
         init_fn: tp.Union[
             tp.Callable[..., torch.Tensor],
             tp.Any] = uniform_init if not kmeans_init else torch.zeros
         embed = init_fn(codebook_size, dim)
+
+        # Scale the random init toward the origin (no-op for kmeans_init, which
+        # starts from zeros). Keeps codes away from the boundary regime where
+        # hyperbolic_distance_sq's atanh clamp saturates.
+        if embed_init_scale != 1.0:
+            embed = embed * embed_init_scale
 
         # if not kmeans_init:
         #     # Normalize random init to zero-mean, unit-variance
@@ -421,6 +454,18 @@ class EuclideanCodebook(nn.Module):
         self.threshold_ema_dead_code = threshold_ema_dead_code
 
         if self.c > 0:
+            if not kmeans_init:
+                # Codes are direct Poincare points. Raw high-dim kaiming rows have
+                # norm ~sqrt(2), so project() would pin EVERY code on the boundary
+                # (radius ~1), where hyperbolic_distance_sq's atanh clamp saturates
+                # and zeroes the commit/codebook-loss gradient. Instead place codes
+                # in the interior: keep the (diverse) kaiming directions but spread
+                # the radii uniformly in (0, r_max], with r_max set by code_max_radius.
+                r_max = self.code_max_radius if self.code_max_radius > 0 else 0.5
+                r_max = min(r_max, 1 - 1e-3)
+                directions = embed / embed.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+                radii = torch.rand(codebook_size, 1) * (r_max / (self.c ** 0.5))
+                embed = directions * radii
             # Ensure random initialization is on the manifold when k-means init is disabled.
             embed = project(embed, self.c)
 
@@ -439,7 +484,12 @@ class EuclideanCodebook(nn.Module):
         if self.c <= 0:
             return
         with torch.no_grad():
-            self.embed.data.copy_(project(self.embed.data, self.c))
+            e = project(self.embed.data, self.c)
+            if self.code_max_radius > 0:
+                max_norm = self.code_max_radius / (self.c ** 0.5)
+                norm = e.norm(dim=-1, keepdim=True)
+                e = e * (max_norm / norm.clamp_min(1e-8)).clamp_max(1.0)
+            self.embed.data.copy_(e)
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -628,12 +678,25 @@ class VectorQuantization(nn.Module):
             ema: bool=False,
             hste: bool=False,
             hste_riemannian: bool=False,
-            gyration_weight: float=0., ):
+            gyration_only: bool=False,
+            block_hste: bool=False,
+            block_hste_pt: bool=False,
+            gyration_weight: float=0.,
+            code_max_radius: float=0.,
+            embed_init_scale: float=1.0, ):
         super().__init__()
         self.c = c
         self.ema = ema
         self.hste = hste
         self.hste_riemannian = hste_riemannian
+        self.gyration_only = gyration_only
+        # Block-level STE (--block_hste / --block_hste_pt): the per-layer quantize is
+        # returned fully DETACHED (codebooks learn from the codebook loss only, as
+        # with the other STEs); the encoder's through-quantizer gradient is provided
+        # once, at block level, by ResidualVectorQuantization.forward (identity STE
+        # in tangent space for block_hste, one HSTE transport on the ball for
+        # block_hste_pt).
+        self.block_ste = block_hste or block_hste_pt
 
         _codebook_dim: int = default(codebook_dim, dim)
 
@@ -651,7 +714,9 @@ class VectorQuantization(nn.Module):
             threshold_ema_dead_code=threshold_ema_dead_code,
             c=c,
             ema=ema,
-            gyration_weight=gyration_weight)
+            gyration_weight=gyration_weight,
+            code_max_radius=code_max_radius,
+            embed_init_scale=embed_init_scale)
         self.codebook_size = codebook_size
 
     @property
@@ -670,8 +735,11 @@ class VectorQuantization(nn.Module):
             #     diff = mobius_sub(quantize, x, self.c)
             #     quantize = project(mobius_add(x, diff.detach(), self.c), self.c)
             # else:
-            if self.hste:
-                quantize = HyperbolicSTE.apply(x, quantize, self.c, self.hste_riemannian)
+            if self.block_ste:
+                quantize = quantize_raw.detach()
+            elif self.hste:
+                quantize = HyperbolicSTE.apply(x, quantize, self.c, self.hste_riemannian,
+                                               self.gyration_only)
             else:
                 quantize = x + (quantize - x).detach()
 
@@ -711,6 +779,48 @@ class ResidualVectorQuantization(nn.Module):
             self.entailment_cone_loss_fn = HyperbolicEntailmentConeLoss(K=0.1, c=self.c)
         self.new_method = kwargs.pop("new_method", True)
         self.gradient_correction = kwargs.pop("gradient_correction", False)
+        # Shaping of the tangent vector before exp_map0 (c>0 only). Both push
+        # residuals off the origin so the nearest-code argmax discriminates by
+        # direction; at the origin all same-radius codes are ~equidistant -> collapse.
+        #   encoder_scale: constant multiplier (the encoder can absorb this).
+        #   encoder_shell > 0: L2-normalise each vector so exp_map0 lands on a fixed
+        #     ball-radius = encoder_shell/sqrt(c). Removes the magnitude DOF so the
+        #     encoder cannot collapse residuals to the origin. Takes precedence.
+        self.encoder_scale = kwargs.pop("encoder_scale", 1.0)
+        self.encoder_shell = kwargs.pop("encoder_shell", 0.0)
+        # When True (c>0 only), the codebook_dim bottleneck is a EUCLIDEAN nn.Linear
+        # applied in tangent space BEFORE exp_map0 (and after log_map0 on decode),
+        # instead of a hyperbolic HLinear on the ball. So exp_map, the codebooks, and
+        # all quantization happen in the low-dim Poincare ball; no hyperbolic layers.
+        self.tangent_proj = kwargs.pop("tangent_proj", False)
+        # Block-level tangent STE (--block_hste): one straight-through wrapping the
+        # whole RVQ block, out = x_tan + (log_map0(mobius_sum) - x_tan).detach().
+        # The decoder gradient reaches the encoder with factor exactly 1: no
+        # per-layer hops, hence no sum-over-paths of conformal factors at all.
+        # Per-layer codes are detached (see VectorQuantization.block_ste); commit
+        # losses keep their direct differentiable path to the encoder.
+        self.block_hste = kwargs.get("block_hste", False)
+        # Block-level PT-STE (--block_hste_pt): like --block_hste, but the single
+        # block-level hop is a HyperbolicSTE transport on the ball, from the full
+        # Möbius sum Q back to the initial residual r0, applied BEFORE project_out /
+        # log_map0. Since Möbius left translations are isometries and (new_method)
+        # r0 = L_{q1}...L_{qN}(r_N) while Q = L_{q1}...L_{qN}(0), the STE lie
+        # d(Q, r0) = d(r_N, 0) — the final quantization error, the same size as a
+        # per-layer STE at the last layer, paid in ONE transport between two macro
+        # points (endpoint conformal ratio lambda_r0/lambda_Q, no compounding).
+        # The hste_riemannian / gyration_only variants apply to the hop.
+        self.block_hste_pt = kwargs.get("block_hste_pt", False)
+        if self.block_hste and self.block_hste_pt:
+            raise ValueError("--block_hste and --block_hste_pt are mutually exclusive")
+        self.hste_riemannian = kwargs.get("hste_riemannian", False)
+        self.gyration_only = kwargs.get("gyration_only", False)
+        # First-batch tangent-norm auto-calibration (active when encoder_scale<=0):
+        # a single global scale is fitted once so the median residual lands at
+        # _enc_target, then frozen in a buffer (saved/restored with the model).
+        # Unlike encoder_shell this preserves per-vector magnitude variation.
+        self._enc_target = 0.5
+        self.register_buffer("_enc_scale", torch.ones(1))
+        self.register_buffer("_enc_calibrated", torch.zeros(1))
         # --- optional per-quantizer diagnostics (off by default; no hot-path cost) ---
         # When self.diag is True, forward() records, per residual layer, the max
         # Poincaré radius fraction sqrt(c)*||.|| (1.0 == ball boundary) of the
@@ -729,11 +839,19 @@ class ResidualVectorQuantization(nn.Module):
         _codebook_dim: int = default(codebook_dim, dim)
 
         self.requires_projection = _codebook_dim != dim
-        if self.requires_projection and self.c > 0:
+        if self.block_hste and self.requires_projection and not self.tangent_proj:
+            raise ValueError(
+                "--block_hste needs the encoder tangent and the quantized output in "
+                "the same (tangent) space: use --tangent_proj with codebook_dim != "
+                "dimension, or codebook_dim == dimension.")
+        if self.requires_projection and self.c > 0 and not self.tangent_proj:
             hyp_manifold = HypllPoincareBall(c=Curvature(self.c))
             self.project_in = HLinear(dim, _codebook_dim, manifold=hyp_manifold, bias=True)
             self.project_out = HLinear(_codebook_dim, dim, manifold=hyp_manifold, bias=True)
         elif self.requires_projection:
+            # Euclidean projection. For c>0 + tangent_proj this is applied in tangent
+            # space (before exp_map0 / after log_map0); for c==0 it is the ordinary
+            # pre-quantization bottleneck.
             self.project_in = nn.Linear(dim, _codebook_dim)
             self.project_out = nn.Linear(_codebook_dim, dim)
         else:
@@ -761,6 +879,31 @@ class ResidualVectorQuantization(nn.Module):
                 lambda g, i=i: self.diag_data['grad_in'].__setitem__(
                     i, g.detach().norm().item()))
 
+    def _shape_tangent(self, x):
+        """Shape the encoder tangent vector before exp_map0 (c>0 only)."""
+        if self.encoder_shell > 0:
+            sqrt_c = self.c ** 0.5
+            target_norm = math.atanh(min(self.encoder_shell, 1 - 1e-6)) / sqrt_c
+            x = x / x.norm(dim=-1, keepdim=True).clamp_min(1e-8) * target_norm
+        elif self.encoder_scale <= 0:
+            # One-time first-batch auto-calibration of a single global tangent
+            # scale so the median residual lands at radius self._enc_target. High-dim
+            # encoder outputs have ||v|| ~ sqrt(d), so exp_map0 otherwise saturates on
+            # the boundary where hyperbolic_distance_sq's atanh clamp zeroes the
+            # gradient. The scalar is frozen after the first batch and restored from
+            # checkpoints; preserves per-vector magnitude variation.
+            if self.training and self._enc_calibrated.item() == 0:
+                with torch.no_grad():
+                    sqrt_c = self.c ** 0.5
+                    med = x.norm(dim=-1).median().clamp_min(1e-8)
+                    target_norm = math.atanh(min(self._enc_target, 1 - 1e-6)) / sqrt_c
+                    self._enc_scale.fill_(float(target_norm / med))
+                    self._enc_calibrated.fill_(1)
+            x = x * self._enc_scale
+        elif self.encoder_scale != 1.0:
+            x = x * self.encoder_scale
+        return x
+
     def encode(self, x, n_q: tp.Optional[int] = None, st: int = 0):
         """Encode input to discrete code indices.
 
@@ -775,8 +918,11 @@ class ResidualVectorQuantization(nn.Module):
         n_q = n_q or len(self.layers)
 
         if self.c > 0:
+            if self.requires_projection and self.tangent_proj:
+                x = self.project_in(x)  # Euclidean D->d in tangent space, BEFORE exp_map0
+            x = self._shape_tangent(x)
             residual = project(exp_map0(x, self.c), self.c)
-            if self.requires_projection:
+            if self.requires_projection and not self.tangent_proj:
                 residual = self.project_in(ManifoldTensor(residual, manifold=self.project_in.manifold)).tensor
         else:
             residual = x
@@ -833,11 +979,11 @@ class ResidualVectorQuantization(nn.Module):
 
         # Apply output projection and map back to tangent space for hyperbolic
         if self.c > 0:
-            if self.requires_projection:
+            if self.requires_projection and not self.tangent_proj:
                 quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
-            else:
-                quantized_out = self.project_out(quantized_out)
             quantized_out = log_map0(quantized_out, self.c)
+            if self.requires_projection and self.tangent_proj:
+                quantized_out = self.project_out(quantized_out)  # Euclidean d->D in tangent space, AFTER log_map0
         else:
             quantized_out = self.project_out(quantized_out)
 
@@ -846,12 +992,19 @@ class ResidualVectorQuantization(nn.Module):
     def forward(self, x, n_q: tp.Optional[int]=None, approx: bool=False):
         x = rearrange(x, "b d n -> b n d")
         if self.c > 0:
+            if self.requires_projection and self.tangent_proj:
+                x = self.project_in(x)  # Euclidean D->d in tangent space, BEFORE exp_map0
+            x = self._shape_tangent(x)
             residual = project(exp_map0(x, self.c), self.c)
-            if self.requires_projection:
+            if self.requires_projection and not self.tangent_proj:
                 residual = self.project_in(ManifoldTensor(residual, manifold=self.project_in.manifold)).tensor
         else:
             residual = x
             residual = self.project_in(residual)
+
+        # initial residual r0 on the ball (post project_in), base point of the
+        # block-level PT-STE hop
+        r0 = residual
 
         quantized_out = torch.zeros_like(residual)
         all_losses = []
@@ -910,16 +1063,26 @@ class ResidualVectorQuantization(nn.Module):
             for q in reversed(all_quantized[:-1]):
                 quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
 
-            if self.requires_projection:
+            if self.block_hste_pt and self.training:
+                # single block-level HSTE hop Q -> r0 on the ball (per-layer codes
+                # are detached, so this is the only recon path to the encoder)
+                quantized_out = HyperbolicSTE.apply(
+                    r0, quantized_out, self.c, self.hste_riemannian,
+                    self.gyration_only)
+
+            if self.requires_projection and not self.tangent_proj:
                 quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
-            else:
-                quantized_out = self.project_out(quantized_out)
 
             if approx:
                 diff = mobius_sub(mobius_add(quantized_out, residual, self.c), project(exp_map0(x, self.c), self.c), self.c)
                 distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
 
             quantized_out = log_map0(quantized_out, self.c)
+            if self.block_hste and self.training:
+                # block-level identity STE in tangent coordinates (x = shaped tangent)
+                quantized_out = x + (quantized_out - x).detach()
+            if self.requires_projection and self.tangent_proj:
+                quantized_out = self.project_out(quantized_out)  # Euclidean d->D in tangent space, AFTER log_map0
 
         else:
             for layer in self.layers[:n_q]:
@@ -973,16 +1136,28 @@ class ResidualVectorQuantization(nn.Module):
                 quantized_out = all_quantized[0]
                 for q in all_quantized[1:]:
                     quantized_out = project(mobius_add(quantized_out, q, self.c), self.c)
-                if self.requires_projection:
+
+                if self.block_hste_pt and self.training:
+                    # single block-level HSTE hop Q -> r0 on the ball (per-layer
+                    # codes are detached, so this is the only recon path to the
+                    # encoder)
+                    quantized_out = HyperbolicSTE.apply(
+                        r0, quantized_out, self.c, self.hste_riemannian,
+                        self.gyration_only)
+
+                if self.requires_projection and not self.tangent_proj:
                     quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
-                else:
-                    quantized_out = self.project_out(quantized_out)
 
                 if approx:
                     diff = mobius_sub(mobius_add(quantized_out, residual, self.c), project(exp_map0(x, self.c), self.c), self.c)
                     distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
 
                 quantized_out = log_map0(quantized_out, self.c)
+                if self.block_hste and self.training:
+                    # block-level identity STE in tangent coordinates (x = shaped tangent)
+                    quantized_out = x + (quantized_out - x).detach()
+                if self.requires_projection and self.tangent_proj:
+                    quantized_out = self.project_out(quantized_out)  # Euclidean d->D in tangent space, AFTER log_map0
             else:
                 quantized_out = self.project_out(quantized_out)
 

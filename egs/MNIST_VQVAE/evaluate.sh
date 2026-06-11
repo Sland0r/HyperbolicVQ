@@ -2,10 +2,10 @@
 
 #SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
-#SBATCH --job-name=evaluate_mnist_vqvae
+#SBATCH --job-name=evaluate_emnist_vqvae
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=01:30:00
+#SBATCH --time=06:30:00
 #SBATCH --output=evaluations/evaluate_%A.out
 
 module purge
@@ -13,7 +13,15 @@ module load 2025
 module load Anaconda3/2025.06-1
 source activate vaes
 
-CHECKPOINTS_DIR="/home/acolombo/VAEs/checkpoint/mnist_vqvae/"
+# Pass test-selection flags through to evaluate.py. Examples:
+#   sbatch evaluate.sh                                  # run the default suite
+#   sbatch evaluate.sh --robustness                     # only robustness
+#   sbatch evaluate.sh --generation --interpretability  # only those two
+#   sbatch evaluate.sh --rq_transformer                 # only the RQ-Transformer
+# If no flag is given, evaluate.py runs robustness + generation + interpretability.
+EVAL_FLAGS=("$@")
+
+CHECKPOINTS_DIR="/home/acolombo/VAEs/checkpoint/cifar100/"
 
 for model_dir in "$CHECKPOINTS_DIR"/*/; do
     model_dir=${model_dir%/}
@@ -36,5 +44,7 @@ for model_dir in "$CHECKPOINTS_DIR"/*/; do
     python3 /home/acolombo/VAEs/egs/MNIST_VQVAE/evaluate.py \
         --checkpoint "$CHECKPOINTS_DIR/$model_name/$best_file" \
         --dataset "$dataset" \
-        --num_samples 100
+        --num_samples 10000 \
+        --rq_transformer \
+        "${EVAL_FLAGS[@]}"
 done

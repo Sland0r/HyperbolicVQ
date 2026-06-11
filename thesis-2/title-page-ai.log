@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.6.1)  4 JUN 2026 20:52
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2026.6.1)  5 JUN 2026 15:22
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -130,6 +130,9 @@ Package: inputenc 2020/08/01 v1.3d Input encoding file
 \inpenc@prehook=\toks21
 \inpenc@posthook=\toks22
 )
+(/usr/share/texlive/texmf-dist/tex/latex/base/fontenc.sty
+Package: fontenc 2020/08/10 v2.0s Standard LaTeX package
+)
 (/usr/share/texlive/texmf-dist/tex/generic/babel/babel.sty
 Package: babel 2021/03/03 3.55 The Babel package
 
@@ -187,20 +190,20 @@ File: l3backend-pdftex.def 2021-03-18 L3 backend support: PDF output (pdfTeX)
 (./title-page-ai.aux)
 \openout1 = `title-page-ai.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 16.
+LaTeX Font Info:    ... okay on input line 16.
 
 (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
@@ -267,7 +270,7 @@ Package epstopdf Info: Source file: <uvalogo_regular_p_nl.eps>
 (epstopdf)                    size: 20343 bytes
 (epstopdf)             Command: <repstopdf --outfile=uvalogo_regular_p_nl-eps-c
 onverted-to.pdf uvalogo_regular_p_nl.eps>
-(epstopdf)             \includegraphics on input line 145.
+(epstopdf)             \includegraphics on input line 146.
 Package epstopdf Info: Output file is already uptodate.
 
 
@@ -277,7 +280,7 @@ F inclusion: found PDF version <1.7>, but at most version <1.5> allowed
 File: uvalogo_regular_p_nl-eps-converted-to.pdf Graphic file (type pdf)
 <use uvalogo_regular_p_nl-eps-converted-to.pdf>
 Package pdftex.def Info: uvalogo_regular_p_nl-eps-converted-to.pdf  used on inp
-ut line 145.
+ut line 146.
 (pdftex.def)             Requested size: 284.52756pt x 28.24817pt.
 [1
 
@@ -292,6 +295,12 @@ LaTeX Font Info:    Trying to load font information for U+msb on input line 4.
 
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
+)
+LaTeX Font Info:    Trying to load font information for T1+cmtt on input line 3
+6.
+
+(/usr/share/texlive/texmf-dist/tex/latex/base/t1cmtt.fd
+File: t1cmtt.fd 2019/12/16 v2.5j Standard LaTeX font definitions
 ))
 \tf@toc=\write3
 \openout3 = `title-page-ai.toc'.
@@ -300,311 +309,131 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 
 ] [1]
 Chapter 1.
-
-LaTeX Warning: Citation `originalvq' on page 1 undefined on input line 169.
-
-
-LaTeX Warning: Citation `vqvae' on page 1 undefined on input line 169.
-
-
-LaTeX Warning: Citation `finitescalarquantizationfsq' on page 1 undefined on in
-put line 169.
-
-
-LaTeX Warning: Citation `gumbelvq' on page 1 undefined on input line 169.
-
-
-LaTeX Warning: Citation `vqnew' on page 1 undefined on input line 169.
-
-
-LaTeX Warning: Citation `soundstream' on page 1 undefined on input line 169.
-
-
-LaTeX Warning: Citation `collapse_1' on page 1 undefined on input line 171.
-
 [1
 
 ] [2]
 Chapter 2.
-
-LaTeX Warning: Citation `originalvq' on page 3 undefined on input line 190.
-
-
-LaTeX Warning: Citation `vqvae' on page 3 undefined on input line 190.
-
-
-LaTeX Warning: Citation `straight_through_estimator' on page 3 undefined on inp
-ut line 190.
-
-
-LaTeX Warning: Citation `collapse_1' on page 3 undefined on input line 192.
-
-
-LaTeX Warning: Citation `collapse_2' on page 3 undefined on input line 192.
-
-
-LaTeX Warning: Citation `hqvae' on page 3 undefined on input line 192.
-
-
-LaTeX Warning: Citation `gumbelvq' on page 3 undefined on input line 192.
-
-
-LaTeX Warning: Citation `finitescalarquantizationfsq' on page 3 undefined on in
-put line 192.
-
-
-LaTeX Warning: Citation `soundstream' on page 3 undefined on input line 199.
-
 [3
 
-]
-
-LaTeX Warning: Citation `lee2022rqvae' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `resgen' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `progic' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `evotok' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `soundstream' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `encodec' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `audiolm' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `musicgen' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `su2026ultralow' on page 4 undefined on input line 201.
-
-
-
-LaTeX Warning: Citation `li2026llsdr' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `ye2026hierarchical' on page 4 undefined on input line 
-201.
-
-
-LaTeX Warning: Citation `wu2026quantizer' on page 4 undefined on input line 201
-.
-
-
-LaTeX Warning: Citation `tiger' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `talkplay' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `ddbc' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `r3vae' on page 4 undefined on input line 201.
-
-
-LaTeX Warning: Citation `hyprqvae_recsys' on page 4 undefined on input line 201
-.
-
-
-LaTeX Warning: Citation `cannon1997hyperbolic' on page 4 undefined on input lin
-e 208.
-
-
-LaTeX Warning: Citation `sala2018representation' on page 4 undefined on input l
-ine 208.
-
-
-LaTeX Warning: Citation `nickel2017poincare' on page 4 undefined on input line 
-210.
-
-
-LaTeX Warning: Citation `ganea2018hyperbolic' on page 4 undefined on input line
- 210.
-
-
-LaTeX Warning: Citation `ungar2009gyrovector' on page 4 undefined on input line
- 210.
-
-
-LaTeX Warning: Citation `khrulkov2020hyperbolic' on page 4 undefined on input l
-ine 210.
-
-
-LaTeX Warning: Citation `atigh2022hyperbolic' on page 4 undefined on input line
- 210.
-
-
-LaTeX Warning: Citation `mettes2024hyperbolic' on page 4 undefined on input lin
-e 210.
-
-
-LaTeX Warning: Citation `petermann2023hyperbolic' on page 4 undefined on input 
-line 210.
-
-
-LaTeX Warning: Citation `mathieu2019poincare' on page 4 undefined on input line
- 210.
-
-
-LaTeX Warning: Citation `hypervq' on page 4 undefined on input line 210.
-
-
-LaTeX Warning: Citation `hvqvae' on page 4 undefined on input line 210.
-
-
-LaTeX Warning: Citation `bu2025ggball' on page 4 undefined on input line 210.
-
-
-LaTeX Warning: Citation `yao2026zeroshot' on page 4 undefined on input line 210
-.
-
-
-LaTeX Warning: Citation `wang2026varlenrec' on page 4 undefined on input line 2
-10.
-
-
-LaTeX Warning: Citation `girish2026prosody' on page 4 undefined on input line 2
-10.
-
-[4]
-
-LaTeX Warning: Citation `hrqvae' on page 5 undefined on input line 212.
-
-
-LaTeX Warning: Citation `hyprqvae_recsys' on page 5 undefined on input line 212
-.
-
-[5]
+] [4] [5]
 Chapter 3.
 
-LaTeX Warning: Citation `vqvae' on page 6 undefined on input line 220.
-
-
-LaTeX Warning: Citation `straight_through_estimator' on page 6 undefined on inp
-ut line 227.
-
-
-Overfull \hbox (7.07645pt too wide) in paragraph at lines 227--228
- \OT1/cmr/bx/n/12 The Straight-Through Es-ti-ma-tor.[] \OT1/cmr/m/n/12 The near
-est-neighbour as-sign-ment $[]$ is a piecewise-
+Overfull \hbox (6.96803pt too wide) in paragraph at lines 228--229
+ \T1/cmr/bx/n/12 The Straight-Through Es-ti-ma-tor.[] \T1/cmr/m/n/12 The neares
+t-neighbour as-sign-ment $[]$ is a piecewise-
  []
 
 
-Overfull \hbox (3.27002pt too wide) in paragraph at lines 235--236
- \OT1/cmr/bx/n/12 Train-ing ob-jec-tive.[] \OT1/cmr/m/n/12 Since the code-book 
-is not reached by the re-con-struc-tion gra-di-ent through
+Overfull \hbox (3.15504pt too wide) in paragraph at lines 236--237
+ \T1/cmr/bx/n/12 Train-ing ob-jec-tive.[] \T1/cmr/m/n/12 Since the code-book is
+ not reached by the re-con-struc-tion gra-di-ent through
  []
 
 [6
 
-]
-
-LaTeX Warning: Citation `collapse_1' on page 7 undefined on input line 242.
-
-
-LaTeX Warning: Citation `soundstream' on page 7 undefined on input line 246.
-
-
-LaTeX Warning: Citation `cannon1997hyperbolic' on page 7 undefined on input lin
-e 265.
-
-
-LaTeX Warning: Citation `sala2018representation' on page 7 undefined on input l
-ine 265.
-
-
-LaTeX Warning: Citation `nickel2017poincare' on page 7 undefined on input line 
-265.
-
-
-LaTeX Warning: Citation `ganea2018hyperbolic' on page 7 undefined on input line
- 265.
-
-[7]
-
-LaTeX Warning: Citation `ungar2009gyrovector' on page 8 undefined on input line
- 282.
-
-[8] [9]
+] [7] [8] [9]
 Chapter 4.
 
 LaTeX Warning: Reference `sec:hyp_objectives' on page 10 undefined on input lin
-e 338.
+e 339.
 
 
-Overfull \hbox (3.78514pt too wide) in paragraph at lines 338--339
-\OT1/cmr/m/n/12 quan-ti-za-tion pro-cess of Resid-ual Vec-tor Quan-tized Vari-a
--tional Au-toen-coders (RQ-VAEs). Build-
+Overfull \hbox (3.67091pt too wide) in paragraph at lines 339--340
+\T1/cmr/m/n/12 quan-ti-za-tion pro-cess of Resid-ual Vec-tor Quan-tized Vari-a-
+tional Au-toen-coders (RQ-VAEs). Build-
  []
 
 
-LaTeX Warning: Citation `hrqvae' on page 10 undefined on input line 351.
+LaTeX Warning: Reference `eq:hste_forward' on page 10 undefined on input line 3
+53.
 
 [10
 
-] [11] [12] [13]
-
-LaTeX Warning: Reference `sec:hyp_objectives' on page 14 undefined on input lin
-e 454.
-
-LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <17.28> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 459.
-[14] [15]
-Chapter 5.
-[16
-
 ]
-Chapter 6.
+Overfull \hbox (33.48055pt too wide) in paragraph at lines 374--375
+\T1/cmr/m/n/12 stack. The re-main-der of this sec-tion an-a-lyzes that prob-lem
+ and the cor-rec-tion (\T1/cmtt/m/n/12 gradient_correction\T1/cmr/m/n/12 )
+ []
+
+[11] [12]
+
+LaTeX Warning: Reference `sec:hyp_objectives' on page 13 undefined on input lin
+e 417.
+
+
+Overfull \hbox (0.63567pt too wide) in paragraph at lines 422--422
+[]\T1/cmr/bx/n/17.28 The Rie-man-nian Hy-per-bolic Straight-Through Es-ti-ma-
+ []
+
+[13] [14]
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <14.4> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 470.
+ [15] [16]
+Chapter 5.
 [17
 
 ]
-Appendix A.
-No file title-page-ai.bbl.
+Chapter 6.
 [18
 
-] (./title-page-ai.aux)
+]
+Appendix A.
+
+Overfull \hbox (29.39471pt too wide) in paragraph at lines 501--502
+\T1/cmr/m/n/12 ma-tor (STE), the stan-dard Hy-per-bolic STE (HSTE), and the Rie
+-man-nian HSTE (\T1/cmtt/m/n/12 hste_riemannian\T1/cmr/m/n/12 ). 
+ []
+
+[19
+
+]
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <17.28> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 557.
+ [20] (./title-page-ai.bbl [21] [22
+
+] [23]) [24] (./title-page-ai.aux)
 
 LaTeX Warning: There were undefined references.
 
  ) 
 Here is how much of TeX's memory you used:
- 3760 strings out of 481008
- 51215 string characters out of 5909440
- 375382 words of memory out of 5000000
- 20905 multiletter control sequences out of 15000+600000
- 412471 words of font info for 60 fonts, out of 8000000 for 9000
+ 4046 strings out of 481008
+ 54124 string characters out of 5909440
+ 374109 words of memory out of 5000000
+ 21171 multiletter control sequences out of 15000+600000
+ 420114 words of font info for 63 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 68i,9n,74p,2045b,273s stack positions out of 5000i,500n,10000p,200000b,80000s
-{/usr/share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc}</us
-r/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/shar
-e/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmcsc10.pfb></usr/share/tex
-live/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/t
-exmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texlive/texmf-d
-ist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr/share/texlive/texmf-dist/fon
-ts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type
-1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/publi
-c/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfo
-nts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/c
-mr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pf
-b></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr
-/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/share/
-texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti12.pfb></usr/share/texliv
-e/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb></usr/share/texlive/texm
-f-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb></usr/share/texlive/texmf
--dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-
-dist/fonts/type1/public/cm-super/sfrm1200.pfb>
-Output written on title-page-ai.pdf (21 pages, 258288 bytes).
+ 68i,10n,74p,2043b,273s stack positions out of 5000i,500n,10000p,200000b,80000s
+{/usr/share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc}</usr
+/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share
+/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texli
+ve/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr/share/texlive/texm
+f-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/
+fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/t
+ype1/public/amsfonts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/pub
+lic/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsf
+onts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/c
+m/cmsy6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8
+.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msam10.
+pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.p
+fb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfbx1200.pfb></us
+r/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfbx1440.pfb></usr/share
+/texlive/texmf-dist/fonts/type1/public/cm-super/sfbx1728.pfb></usr/share/texliv
+e/texmf-dist/fonts/type1/public/cm-super/sfbx2488.pfb></usr/share/texlive/texmf
+-dist/fonts/type1/public/cm-super/sfcc1440.pfb></usr/share/texlive/texmf-dist/f
+onts/type1/public/cm-super/sfcc1728.pfb></usr/share/texlive/texmf-dist/fonts/ty
+pe1/public/cm-super/sfrm0800.pfb></usr/share/texlive/texmf-dist/fonts/type1/pub
+lic/cm-super/sfrm1200.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-
+super/sfrm1440.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/s
+frm1728.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfti1200
+.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfti1440.pfb></
+usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sftt1200.pfb></usr/sha
+re/texlive/texmf-dist/fonts/type1/public/cm-super/sftt1440.pfb></usr/share/texl
+ive/texmf-dist/fonts/type1/public/cm-super/sftt1728.pfb>
+Output written on title-page-ai.pdf (27 pages, 495657 bytes).
 PDF statistics:
- 154 PDF objects out of 1000 (max. 8388607)
- 108 compressed objects within 2 object streams
+ 209 PDF objects out of 1000 (max. 8388607)
+ 148 compressed objects within 2 object streams
  0 named destinations out of 1000 (max. 500000)
  6 words of extra memory for PDF output out of 10000 (max. 10000000)
 

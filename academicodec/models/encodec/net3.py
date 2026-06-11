@@ -36,7 +36,16 @@ class SoundStream(nn.Module):
                  new_method: bool=True,
                  approx: bool=False,
                  hste: bool=False,
-                 gradient_correction: bool=False):
+                 hste_riemannian: bool=False,
+                 gyration_only: bool=False,
+                 block_hste: bool=False,
+                 block_hste_pt: bool=False,
+                 gradient_correction: bool=False,
+                 encoder_scale: float=1.0,
+                 encoder_shell: float=0.0,
+                 code_max_radius: float=0.0,
+                 embed_init_scale: float=1.0,
+                 tangent_proj: bool=False):
         super().__init__()
         self.hop_length = np.prod(ratios)  # 计算乘积
         self.encoder = SEANetEncoder(
@@ -57,8 +66,12 @@ class SoundStream(nn.Module):
             dot_product_weight=dot_product_weight, entailment_cone_weight=entailment_cone_weight,
             gyration_weight=gyration_weight,
             c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove,
-            new_method=new_method, approx=approx, hste=hste,
-            gradient_correction=gradient_correction)
+            new_method=new_method, approx=approx, hste=hste, hste_riemannian=hste_riemannian,
+            gyration_only=gyration_only, block_hste=block_hste,
+            block_hste_pt=block_hste_pt,
+            gradient_correction=gradient_correction, encoder_scale=encoder_scale,
+            encoder_shell=encoder_shell, code_max_radius=code_max_radius,
+            embed_init_scale=embed_init_scale, tangent_proj=tangent_proj)
         self.pre_quant_batchnorm = pre_quant_batchnorm
         self.pre_quant_bn = nn.BatchNorm1d(D) if pre_quant_batchnorm else nn.Identity()
         self.decoder = SEANetDecoder(

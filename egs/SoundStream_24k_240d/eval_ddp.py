@@ -146,6 +146,9 @@ def get_args():
         '--kmeans_init',
         action='store_true',
         help='use kmeans_init for codebook (default: False)')
+    parser.add_argument(
+        '--new_method', action='store_true',
+        help='match training: left-subtraction encoding / right-associative decoding (default: False)')
     args = parser.parse_args()
     
     if 'SLURM_JOB_ID' in os.environ:
@@ -168,7 +171,7 @@ def main():
     if args.seed is not None or args.cudnn_deterministic:
         seed_everything(args.seed, args.cudnn_deterministic)
     if args.num_node == 1:
-        args.dist_url == "auto"
+        args.dist_url = "auto"
     else:
         assert args.num_node > 1
     args.ngpus_per_node = torch.cuda.device_count()
@@ -183,15 +186,24 @@ def main():
 
 
 def main_worker(local_rank, args):
-    if getattr(args, 'c', 0.0) > 0:
-        torch.set_default_dtype(torch.float64)
+    # NOTE: training (main3_ddp.py) runs in float32 even for c>0, so keep eval in
+    # float32 to match the dtype the checkpoint was trained/saved in. Promoting to
+    # float64 here created a train/eval precision (and memory) asymmetry.
+    # if getattr(args, 'c', 0.0) > 0:
+    #     torch.set_default_dtype(torch.float64)
     args.local_rank = local_rank
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
     args.distributed = args.world_size > 1
     logger = Logger(args)
     # 240倍下采
+    # Pass target_bandwidths/sample_rate so the number of quantizer layers (n_q)
+    # matches the trained checkpoint; otherwise the net3 defaults ([7.5, 15]) yield
+    # a different n_q and load_state_dict fails. exponential_lambda=0.0 disables
+    # bandwidth dropout so evaluation runs deterministically at full bandwidth.
     soundstream = SoundStream(n_filters=32, D=512, ratios=args.ratios, c=args.c,
-                              ema=args.ema, kmeans_init=args.kmeans_init,
+                              target_bandwidths=args.target_bandwidths,
+                              sample_rate=args.sr, exponential_lambda=0.0, uniform=False,
+                              ema=args.ema, kmeans_init=args.kmeans_init, new_method=args.new_method,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
@@ -365,6 +377,22 @@ def evaluate(args, soundstream, stft_disc, msd, mpd, valid_loader, logger):
             perplexities = torch.exp2(entropy).tolist()
 
         ppl_str = ", ".join([f"{p:.1f}" for p in perplexities]) if perplexities else "N/A"
+
+        # Unique codes actually used (support size) per codebook + total across all codebooks
+        unique_used = []
+        total_unique = 0
+        codebook_size_val = 0
+        if codes_hist is not None:
+            used_mask = codes_hist > 0
+            unique_used = used_mask.sum(dim=-1).int().tolist()
+            total_unique = int(used_mask.sum().item())
+            codebook_size_val = int(codes_hist.shape[-1])
+        unique_str = ", ".join(str(u) for u in unique_used) if unique_used else "N/A"
+        print("\n" + "="*80)
+        print(f"UNIQUE CODES USED (per codebook, max={codebook_size_val}): [{unique_str}]")
+        print(f"TOTAL UNIQUE CODES USED: {total_unique} / {len(unique_used) * codebook_size_val}")
+        print("="*80)
+        logger.log_info(f"<UNIQUE_CODES per_codebook=[{unique_str}] total={total_unique} max_per_cb={codebook_size_val}>")
 
         message = '<EVALUATION RESULTS>: total_loss_g_valid:{:.4f}, recon_loss_valid:{:.4f}, adversarial_loss_valid:{:.4f}, feature_loss_valid:{:.4f}, commit_loss_valid:{:.4f}, valid_loss_d:{:.4f}, ppl:[{}]>'.format(
             valid_loss_g / len(valid_loader), valid_rec_loss /

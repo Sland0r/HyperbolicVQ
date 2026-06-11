@@ -18,21 +18,35 @@
 \contentsline {subsection}{\numberline {3.3.5}Parallel Transport}{9}{}%
 \contentsline {subsection}{\numberline {3.3.6}Riemannian Gradients}{9}{}%
 \contentsline {chapter}{\numberline {4}Methods}{10}{}%
-\contentsline {section}{\numberline {4.1}Hyperbolic Residual Quantization}{10}{}%
-\contentsline {subsection}{\numberline {4.1.1}Hyperbolic Distance and Quantization}{10}{}%
-\contentsline {paragraph}{The residual mismatch.}{11}{}%
-\contentsline {subsection}{\numberline {4.1.2}The Hyperbolic Straight-Through Estimator}{11}{}%
-\contentsline {paragraph}{Geometrically valid forward pass.}{11}{}%
-\contentsline {paragraph}{Parallel-transport backward pass.}{11}{}%
-\contentsline {paragraph}{Numerically stable gyration.}{12}{}%
-\contentsline {section}{\numberline {4.2}The Residual Firewall and Gradient Routing}{12}{}%
-\contentsline {subsection}{\numberline {4.2.1}The Euclidean firewall and its breakdown}{13}{}%
-\contentsline {paragraph}{Why the Euclidean STE hid the leak.}{13}{}%
-\contentsline {subsection}{\numberline {4.2.2}Compounding across stacked transports}{13}{}%
-\contentsline {subsection}{\numberline {4.2.3}Spectral radius and the conformal amplifier}{13}{}%
-\contentsline {subsection}{\numberline {4.2.4}Restoring the firewall: the gradient-routing correction}{14}{}%
-\contentsline {paragraph}{Applicability to standard VQ-VAEs.}{14}{}%
-\contentsline {section}{\numberline {4.3}Residual Aggregation: the \texttt {new\_method} Convention}{14}{}%
-\contentsline {chapter}{\numberline {5}Experiments}{16}{}%
-\contentsline {chapter}{\numberline {6}Conclusions}{17}{}%
-\contentsline {chapter}{\numberline {A}Optional appendix}{18}{}%
+\contentsline {section}{\numberline {4.1}The Hyperbolic Straight-Through Estimator}{10}{}%
+\contentsline {paragraph}{Parallel-transport backward pass.}{10}{}%
+\contentsline {paragraph}{Numerically stable gyration.}{11}{}%
+\contentsline {subsection}{\numberline {4.1.1}The Euclidean firewall and its breakdown}{11}{}%
+\contentsline {paragraph}{Why the Euclidean STE hid the leak.}{12}{}%
+\contentsline {subsection}{\numberline {4.1.2}Compounding across stacked transports}{12}{}%
+\contentsline {subsection}{\numberline {4.1.3}Spectral radius and the conformal amplifier}{12}{}%
+\contentsline {subsection}{\numberline {4.1.4}Restoring the firewall: the gradient-routing correction}{13}{}%
+\contentsline {paragraph}{Applicability to standard VQ-VAEs.}{13}{}%
+\contentsline {section}{\numberline {4.2}The Riemannian Hyperbolic Straight-Through Estimator}{13}{}%
+\contentsline {paragraph}{The Problem with Euclidean Conversion.}{14}{}%
+\contentsline {paragraph}{The Riemannian Solution.}{14}{}%
+\contentsline {section}{\numberline {4.3}Residual Aggregation}{14}{}%
+\contentsline {subsection}{\numberline {4.3.1}Hyperbolic Distance and Quantization}{14}{}%
+\contentsline {paragraph}{The residual mismatch.}{15}{}%
+\contentsline {subsection}{\numberline {4.3.2}The \texttt {new\_method} Convention}{15}{}%
+\contentsline {chapter}{\numberline {5}Experiments}{17}{}%
+\contentsline {chapter}{\numberline {6}Conclusions}{18}{}%
+\contentsline {chapter}{\numberline {A}Detailed Analysis of Gradient Leakage}{19}{}%
+\contentsline {section}{\numberline {A.1}Euclidean STE}{19}{}%
+\contentsline {paragraph}{Codebook Loss.}{19}{}%
+\contentsline {paragraph}{Commitment Loss.}{19}{}%
+\contentsline {paragraph}{Reconstruction Loss.}{20}{}%
+\contentsline {section}{\numberline {A.2}Hyperbolic STE (HSTE)}{20}{}%
+\contentsline {paragraph}{Codebook Loss.}{20}{}%
+\contentsline {paragraph}{Commitment Loss.}{20}{}%
+\contentsline {paragraph}{Reconstruction Loss.}{20}{}%
+\contentsline {section}{\numberline {A.3}Riemannian HSTE (\texttt {hste\_riemannian})}{21}{}%
+\contentsline {paragraph}{Codebook Loss.}{21}{}%
+\contentsline {paragraph}{Commitment Loss.}{21}{}%
+\contentsline {paragraph}{Reconstruction Loss.}{21}{}%
+\contentsline {paragraph}{Analysis.}{21}{}%

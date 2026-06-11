@@ -18,14 +18,14 @@ export PYTHONPATH="/home/acolombo/VAEs:${PYTHONPATH}"
 cd /home/acolombo/VAEs/egs/MNIST_VQVAE
 
 #PATH
-SAVE_PATH="/home/acolombo/VAEs/checkpoint/cifar100_vqvae/"
+SAVE_PATH="/home/acolombo/VAEs/checkpoint/cifar100_100/"
 
 #POINCARE 
 C=1.0
 
 #TRAINING 
 BATCH_SIZE=256
-N_EPOCHS=50
+N_EPOCHS=100
 WARMUP_EPOCHS_G=0
 NUMBER_OF_STEPS=1000 # plot codebook every n batches
 PRINT_FREQ=1000 # log every n batches
@@ -33,9 +33,9 @@ DATASET=cifar100
 
 # MODEL
 EXPONENTIAL_LAMBDA=0.0
-D=10
-N_Q=5
-BINS=40
+D=5
+N_Q=4
+BINS=20
 
 # LEARNING RATES AND LOSSES
 LR_G=3e-4
@@ -74,8 +74,9 @@ python3 -u train.py \
         --c $C \
         --exponential_lambda $EXPONENTIAL_LAMBDA \
         --approx \
+        --hste \
+        --hste_riemannian \
         --new_method \
-        #--hste \
         #--constructive \
         #--uniform \
 
