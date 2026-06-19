@@ -1,0 +1,96 @@
+\babel@toc {english}{}
+\contentsline {chapter}{\numberline {1}Introduction}{1}{chapter.1}%
+\contentsline {paragraph}{Contributions.}{3}{section*.2}%
+\contentsline {paragraph}{Scope of the findings.}{3}{section*.3}%
+\contentsline {paragraph}{Thesis outline.}{4}{section*.4}%
+\contentsline {chapter}{\numberline {2}Related Work}{5}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Vector Quantization}{5}{section.2.1}%
+\contentsline {section}{\numberline {2.2}Residual Vector Quantization}{5}{section.2.2}%
+\contentsline {section}{\numberline {2.3}Hyperbolic Representation Learning}{6}{section.2.3}%
+\contentsline {chapter}{\numberline {3}Preliminaries}{8}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Vector-Quantized Variational Autoencoders}{8}{section.3.1}%
+\contentsline {paragraph}{The Straight-Through Estimator.}{8}{section*.5}%
+\contentsline {section}{\numberline {3.2}Residual Vector Quantization}{9}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Hyperbolic Geometry}{9}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}The Poincar\'e Ball Model}{9}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Gyrovector Spaces and M\"obius Operations}{9}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}Geodesic Distance}{10}{subsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.3.4}Tangent Spaces and the Exponential and Logarithmic Maps}{10}{subsection.3.3.4}%
+\contentsline {subsection}{\numberline {3.3.5}Parallel Transport}{10}{subsection.3.3.5}%
+\contentsline {subsection}{\numberline {3.3.6}Riemannian Gradients}{11}{subsection.3.3.6}%
+\contentsline {chapter}{\numberline {4}Method}{12}{chapter.4}%
+\contentsline {section}{\numberline {4.1}The Naive Hyperbolic Estimator and Its Two Failures}{12}{section.4.1}%
+\contentsline {paragraph}{The RQ-VAE objective.}{12}{section*.6}%
+\contentsline {paragraph}{The Euclidean firewall.}{13}{section*.7}%
+\contentsline {paragraph}{The target.}{13}{section*.8}%
+\contentsline {paragraph}{The naive lift.}{13}{section*.9}%
+\contentsline {paragraph}{Failure 1: the copied gradient is geometrically wrong.}{14}{section*.10}%
+\contentsline {paragraph}{Failure 2: the firewall leaks, so gradients accumulate.}{14}{section*.11}%
+\contentsline {paragraph}{Why the naive model still trains --- and why the per-stage fix explodes.}{14}{section*.12}%
+\contentsline {section}{\numberline {4.2}The Block-Level Hyperbolic Straight-Through Estimator}{15}{section.4.2}%
+\contentsline {paragraph}{The hyperbolic transport.}{15}{section*.13}%
+\contentsline {paragraph}{Shutting down the per-stage codes.}{16}{section*.14}%
+\contentsline {paragraph}{One transport, from the aggregate to the encoder.}{16}{section*.15}%
+\contentsline {paragraph}{The Riemannian discount: the discounted HSTE (d-HSTE).}{16}{section*.16}%
+\contentsline {paragraph}{Relation to an explicit firewall.}{17}{section*.17}%
+\contentsline {section}{\numberline {4.3}Residual Aggregation}{17}{section.4.3}%
+\contentsline {subsection}{\numberline {4.3.1}Hyperbolic Distance and Quantization}{17}{subsection.4.3.1}%
+\contentsline {paragraph}{The residual mismatch.}{17}{section*.18}%
+\contentsline {subsection}{\numberline {4.3.2}Hyperbolic Residual Aggregation (HRA)}{18}{subsection.4.3.2}%
+\contentsline {paragraph}{Reordering fixes the forward drift, not the backward leak.}{19}{section*.19}%
+\contentsline {chapter}{\numberline {5}Experimental Setup}{21}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Compared Quantizer Configurations}{21}{section.5.1}%
+\contentsline {paragraph}{Euclidean (baseline).}{21}{section*.20}%
+\contentsline {paragraph}{Vanilla hyperbolic.}{21}{section*.21}%
+\contentsline {paragraph}{A4 (block-level estimator).}{22}{section*.22}%
+\contentsline {section}{\numberline {5.2}Tasks and Datasets}{22}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}Image reconstruction and generation}{22}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Language hierarchy embedding}{22}{subsection.5.2.2}%
+\contentsline {subsection}{\numberline {5.2.3}Sequential recommendation}{23}{subsection.5.2.3}%
+\contentsline {subsection}{\numberline {5.2.4}Neural audio coding}{23}{subsection.5.2.4}%
+\contentsline {section}{\numberline {5.3}Model Architectures}{23}{section.5.3}%
+\contentsline {paragraph}{Image VQ-VAE.}{23}{section*.23}%
+\contentsline {paragraph}{WordNet encoder.}{23}{section*.24}%
+\contentsline {paragraph}{Recommendation RQ-VAE and recommender.}{23}{section*.25}%
+\contentsline {paragraph}{Audio codec.}{23}{section*.26}%
+\contentsline {section}{\numberline {5.4}Training and Hyperparameters}{24}{section.5.4}%
+\contentsline {section}{\numberline {5.5}Evaluation Metrics}{24}{section.5.5}%
+\contentsline {paragraph}{Image.}{24}{section*.27}%
+\contentsline {paragraph}{Language.}{24}{section*.28}%
+\contentsline {paragraph}{Recommendation.}{25}{section*.29}%
+\contentsline {paragraph}{Audio.}{25}{section*.30}%
+\contentsline {section}{\numberline {5.6}Implementation and Tools}{25}{section.5.6}%
+\contentsline {chapter}{\numberline {6}Experiments}{26}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Image Reconstruction, Hierarchy, and Generation}{26}{section.6.1}%
+\contentsline {paragraph}{A three-way dissociation.}{27}{section*.31}%
+\contentsline {paragraph}{Reading.}{27}{section*.32}%
+\contentsline {section}{\numberline {6.2}Language Hierarchy Embedding}{27}{section.6.2}%
+\contentsline {paragraph}{Hyperbolic owns the trainable sweet spot.}{28}{section*.33}%
+\contentsline {paragraph}{What the codes cluster (and a confound).}{28}{section*.34}%
+\contentsline {section}{\numberline {6.3}Sequential Recommendation}{29}{section.6.3}%
+\contentsline {paragraph}{Reading.}{29}{section*.35}%
+\contentsline {section}{\numberline {6.4}Neural Audio Coding}{29}{section.6.4}%
+\contentsline {paragraph}{The depth pathology bites, and A4 contains it.}{30}{section*.36}%
+\contentsline {paragraph}{But hyperbolic is not a better compressor.}{30}{section*.37}%
+\contentsline {section}{\numberline {6.5}Residual Reconstruction Error Across Tasks}{30}{section.6.5}%
+\contentsline {paragraph}{Reading.}{31}{section*.38}%
+\contentsline {section}{\numberline {6.6}Summary}{31}{section.6.6}%
+\contentsline {chapter}{\numberline {7}Ablation Studies}{33}{chapter.7}%
+\contentsline {section}{\numberline {7.1}The encoder's gradient channels}{33}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Gradient routing on WordNet}{34}{section.7.2}%
+\contentsline {paragraph}{At shallow depth the per-layer chain is the asset, not the block hop.}{34}{section*.39}%
+\contentsline {paragraph}{Commitment is the load-bearing channel.}{34}{section*.40}%
+\contentsline {paragraph}{The Riemannian discount is load-bearing only where transports compound.}{35}{section*.41}%
+\contentsline {paragraph}{The commit firewall is monotone here.}{35}{section*.42}%
+\contentsline {section}{\numberline {7.3}Routers and the strict firewall across tasks}{35}{section.7.3}%
+\contentsline {paragraph}{Shallow recommendation echoes WordNet.}{36}{section*.43}%
+\contentsline {paragraph}{At depth the per-layer family dies.}{36}{section*.44}%
+\contentsline {paragraph}{Images: the full-sum router is the best hyperbolic reconstructor (shallow).}{36}{section*.45}%
+\contentsline {paragraph}{Summary.}{36}{section*.46}%
+\contentsline {chapter}{\numberline {8}Conclusions}{38}{chapter.8}%
+\contentsline {chapter}{\numberline {A}Optional appendix}{39}{appendix.A}%
+\contentsline {section}{\numberline {A.1}Numerically stable gyration in the HSTE backward pass}{39}{section.A.1}%
+\contentsline {section}{\numberline {A.2}The leaked residual gradient is informative at shallow depth}{39}{section.A.2}%
+\contentsline {paragraph}{Gradient correction removes exactly the leaked terms.}{40}{section*.47}%
+\contentsline {paragraph}{Turning the leak off hurts at shallow depth.}{40}{section*.48}%
+\contentsline {paragraph}{Why it fails as the stack deepens.}{40}{section*.49}%

@@ -1,0 +1,146 @@
+\documentclass[12pt]{report}
+
+\usepackage{graphicx, color}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage[colorlinks=true,
+            linkcolor=blue,
+            citecolor=blue,
+            urlcolor=blue,
+            linktoc=all]{hyperref}
+\usepackage{cleveref}
+\usepackage{float}
+
+\begin{document}
+
+\chapter{Introduction}
+
+% --- Paragraph 1: Big picture and stakes ---
+Modern generative models of images, audio, language, and user behaviour increasingly
+share a common front end: a tokenizer that turns a continuous, high-dimensional signal
+into a short sequence of discrete symbols. This discretization is what lets a single
+autoregressive transformer or diffusion prior model heterogeneous modalities with the
+same machinery, and its quality sets a ceiling on everything downstream. The most useful
+tokenizers do more than compress; they impose \emph{structure}. Residual quantization, in
+particular, decomposes a signal coarse-to-fine: the first code fixes the global gist, each
+later code refines the error left by its predecessors, and truncating the sequence at any
+depth yields a coherent, progressively sharper approximation \cite{soundstream,lee2022rqvae}.
+The tuple of codes is therefore not a flat label but a path from general to specific---a
+latent hierarchy. The promise of such tokenizers is that this hierarchy is learned for
+free, as a by-product of compression. The difficulty is that the geometry in which it is
+learned was never chosen to hold a hierarchy.
+
+% --- Paragraph 2: Existing progress ---
+The discrete-bottleneck paradigm has been remarkably productive. The VQ-VAE \cite{vqvae}
+introduced a learnable codebook into the autoencoder and, with the straight-through
+estimator \cite{straight_through_estimator}, made nearest-neighbour assignment trainable
+end to end; a decade of refinements has since tamed its optimization, from EMA updates and
+codebook resets to variational and scalar relaxations \cite{hqvae,gumbelvq,finitescalarquantizationfsq}.
+Residual vector quantization \cite{soundstream,encodec} then lifted the idea to multiple
+stages, building a virtual codebook of exponential size $K^{N}$ without enlarging the
+dictionary or the token sequence. The combination now underpins state-of-the-art neural
+audio codecs and the language-model audio systems built on them \cite{audiolm,musicgen},
+autoregressive image generators \cite{lee2022rqvae}, and generative recommenders that
+assign items hierarchical semantic identifiers \cite{tiger}. Across all of these, the same
+property recurs: the residual decomposition induces a tree-like organization of the data.
+If the representation is tree-like, the natural next question is whether the \emph{space}
+that holds it is.
+
+% --- Paragraph 3: Fundamental limitation ---
+It is not. Every one of these methods quantizes in Euclidean space, whose volume grows only
+polynomially with radius. A tree's node count grows exponentially with depth, so embedding
+a deep hierarchy into a flat space forces either crowding or distortion, and no choice of
+dimension removes the mismatch \cite{sala2018representation}. Hyperbolic space is the exact
+remedy: under constant negative curvature, volume grows exponentially, matching the
+branching of a tree, and any weighted tree embeds into the Poincar\'e disk with arbitrarily
+low distortion \cite{nickel2017poincare,sala2018representation}. The mismatch is sharpest
+precisely for residual quantizers, because the structure they induce \emph{is} a tree, yet
+they are committed to the one geometry that represents trees worst. This makes hyperbolic
+space an unusually well-motivated home for residual codes, and motivates moving the
+quantizer onto the manifold.
+
+% --- Paragraph 4: Key insight and motivation ---
+Doing so faithfully, however, is more than a change of coordinates. Existing hyperbolic
+quantizers \cite{hrqvae,hyprqvae_recsys,hypervq} place codes inside the ball but keep
+Euclidean training machinery---identity straight-through gradients, additive residual
+recursions transliterated into M\"obius operations. Our central observation is that this
+half-measure quietly breaks the two algebraic guarantees on which residual quantization
+depends, and breaks them for the same reason: the Poincar\'e ball's addition is neither
+commutative nor associative, and its tangent spaces are rotated relative to one another by
+the gyration that encodes curvature. In the \emph{forward} pass, the rule that removes a
+code from the residual is no longer inverted by the rule that re-assembles the codes, so
+the cascade stops telescoping: the tracked residual drifts from the true reconstruction
+error, deeper codebooks are fit to the wrong target, and the codes never recompose to the
+encoder point. In the \emph{backward} pass, copying a gradient from a code to the encoder is
+not even type-correct---the two gradients live in different tangent spaces---and once stages
+are stacked, the exact cancellation that gives Euclidean RVQ a single clean gradient per
+step leaks, so reconstruction and commitment signals accumulate and explode with depth.
+Both pathologies are geometric in origin, so both admit geometric, rather than heuristic,
+repairs.
+
+% --- Paragraph 5: Proposed method ---
+We introduce \emph{Geometry-aware Hyperbolic Residual Quantization} (GHRQ-VAE), which treats
+quantization as a first-class operation on the Poincar\'e ball and repairs each pathology at
+its source. The forward repair, \emph{Hyperbolic Residual Aggregation} (HRA), pairs a
+left-sided M\"obius subtraction in the residual update with a reverse-nested aggregation, the
+unique pairing the gyrogroup's left-cancellation law makes mutually inverse. This restores
+exact telescoping: the codes recompose to the encoder point, and the only remaining mismatch
+between tracked and true residual is a pure rotation that preserves magnitude, so each
+codebook again sees the genuine reconstruction error. The backward repair routes gradients
+at the \emph{block} level: stop-gradients detach the intermediate residuals, and a single
+\emph{discounted hyperbolic straight-through estimator} transports one geometrically correct,
+depth-independent gradient from the aggregate reconstruction directly to the encoder,
+reproducing the Euclidean ``firewall'' on the manifold while a cancellation-free gyration
+keeps it bounded near the boundary, where curvature is most expressive. The construction is
+curvature-faithful by design: at $c=0$ the M\"obius operations collapse to vector addition,
+the gyration to the identity, and GHRQ-VAE recovers standard residual vector quantization
+exactly. Hyperbolic quantization thus becomes a strict generalization of its Euclidean
+counterpart, not a separate model.
+
+% --- Paragraph 6: Empirical validation ---
+We evaluate GHRQ-VAE against a Euclidean baseline and the naive hyperbolic lift across four
+modalities chosen to span the regimes where these methods are used and where they break:
+WordNet hypernymy prediction, generative sequential recommendation, image reconstruction and
+generation on MNIST and CIFAR-100, and neural audio coding on LibriTTS---the last at a depth
+($n_q=12$) far beyond what prior hyperbolic residual quantizers have attempted, and the first
+application of hyperbolic residual quantization to a convolutional image tokenizer and a deep
+audio codec. The geometry-aware repairs deliver what they were designed to: the on-ball
+residual error falls by one to three orders of magnitude relative to the naive lift,
+confirming that the cascade telescopes in practice; codebook collapse is eliminated where the
+naive lift suffers it; and the learned codes recover latent taxonomies markedly better,
+raising unsupervised CIFAR-100 superclass agreement by $80\%$ in Adjusted Rand Index and
+tightening WordNet semantic clusters. Component ablations localize these gains, showing that
+the corrected gradient---not merely the forward ordering---is what organizes hierarchy. We
+also report an honest negative result: Euclidean quantization remains the better pure
+compressor on raw reconstruction and perceptual fidelity. Curvature does not buy
+distortion; it buys structure and stability, and it buys them robustly with depth.
+
+% --- Final paragraph: contributions ---
+In summary, our contributions are:
+\begin{itemize}
+  \item \textbf{A precise diagnosis.} We show that naively lifting residual quantization to
+  hyperbolic space breaks its two defining guarantees, and identify the geometric cause of
+  each: a forward cascade that no longer telescopes because M\"obius addition is
+  non-associative, and a backward ``firewall'' that leaks because the per-stage gradient is
+  neither transported nor cancelled correctly, causing gradients to accumulate with depth.
+  \item \textbf{A geometry-aware quantizer.} We propose GHRQ-VAE, combining Hyperbolic
+  Residual Aggregation, which restores exact telescoping up to a norm-preserving rotation,
+  with block-level gradient routing through a numerically stabilized discounted hyperbolic
+  straight-through estimator, which delivers a single depth-independent gradient to the
+  encoder. The formulation reduces to standard Euclidean RVQ at zero curvature.
+  \item \textbf{Evidence across four modalities.} We provide the first study of hyperbolic
+  residual quantization on image and deep-audio tokenizers, demonstrating near-exact on-ball
+  reconstruction, restored codebook health, and improved unsupervised hierarchy recovery,
+  together with ablations isolating each component and a clear account of where curvature
+  helps (structure, stability) and where it does not (raw fidelity).
+\end{itemize}
+
+\bibliographystyle{plain}
+\bibliography{bibentries}
+
+\end{document}

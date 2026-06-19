@@ -173,12 +173,33 @@ def mobius_add(x, y, c):
 def mobius_sub(x, y, c):
     return mobius_add(x, -y, c)
 
+# Opt-in via set_leaky_dist_clamp() from the training script; module-level so it
+# cannot leak into experiments that don't pass the flag.
+_LEAKY_DIST_CLAMP = False
+
+def set_leaky_dist_clamp(enabled):
+    global _LEAKY_DIST_CLAMP
+    _LEAKY_DIST_CLAMP = bool(enabled)
+
+def _atanh_leaky(arg, eps=1e-3):
+    # C1 linear extension of atanh beyond 1-eps. The hard clamp makes the loss
+    # flat past the knee (zero gradient = saturation absorbing state); the
+    # extension keeps slope atanh'(1-eps) ~ 1/(2*eps) there, so boundary points
+    # feel a restoring pull instead of nothing.
+    knee = 1.0 - eps
+    slope = 1.0 / (1.0 - knee * knee)
+    inside = torch.atanh(arg.clamp(min=0.0, max=knee))
+    return torch.where(arg <= knee, inside, math.atanh(knee) + (arg - knee) * slope)
+
 def hyperbolic_distance_sq(x, y, c):
     m_add = mobius_sub(x, y, c) # "hyperbolic_distance_sq m_add"
     norm = m_add.norm(dim=-1, keepdim=True).clamp_min(1e-5) # "hyperbolic_distance_sq norm"
     sqrt_c = c ** 0.5
-    arg = (sqrt_c * norm).clamp(min=0.0, max=1 - 1e-3) # "hyperbolic_distance_sq arg"
-    dist = (2 / sqrt_c) * torch.atanh(arg) # "hyperbolic_distance_sq dist"
+    if _LEAKY_DIST_CLAMP:
+        dist = (2 / sqrt_c) * _atanh_leaky(sqrt_c * norm)
+    else:
+        arg = (sqrt_c * norm).clamp(min=0.0, max=1 - 1e-3) # "hyperbolic_distance_sq arg"
+        dist = (2 / sqrt_c) * torch.atanh(arg) # "hyperbolic_distance_sq dist"
     return dist.pow(2) # "hyperbolic_distance_sq result"
 
 def pairwise_hyperbolic_distance_sq(x, y, c):
@@ -281,11 +302,12 @@ def einstein_midpoint(z, w, c):
 class HyperbolicSTE(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, q, c, riemannian=False, gyration_only=False):
+    def forward(ctx, x, q, c, riemannian=False, gyration_only=False, clip=False):
         ctx.save_for_backward(x, q)
         ctx.c = c
         ctx.riemannian = riemannian
         ctx.gyration_only = gyration_only
+        ctx.clip = clip
         return q
 
     @staticmethod
@@ -301,7 +323,7 @@ class HyperbolicSTE(torch.autograd.Function):
             # gradient magnitude is preserved exactly (like the Euclidean STE, which
             # trains); only the direction is hyperbolically corrected.
             return (gyration_transport(q, x, grad_output, c),
-                    None, None, None, None)
+                    None, None, None, None, None)
 
         # conformal factors (clamp c*||.||^2, not the raw norm — correct for all c)
         cq2 = (c * q.pow(2).sum(dim=-1, keepdim=True)).clamp_max(1 - 1e-5)
@@ -327,7 +349,15 @@ class HyperbolicSTE(torch.autograd.Function):
             # Riemannian -> Euclidean (standard STE; ×λ_x² amplifies near boundary)
             grad_x = grad_r_at_x * (lambda_x_ ** 2)
 
-        return grad_x, None, None, None, None
+        if ctx.clip:
+            # --hste_clip: cap the per-vector outgoing norm at the incoming norm,
+            # so the net conformal amplification through the module is <= 1; the
+            # transported direction is preserved.
+            in_norm = grad_output.norm(dim=-1, keepdim=True)
+            out_norm = grad_x.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+            grad_x = grad_x * (in_norm / out_norm).clamp_max(1.0)
+
+        return grad_x, None, None, None, None, None
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     if val == 0:
@@ -678,6 +708,7 @@ class VectorQuantization(nn.Module):
             ema: bool=False,
             hste: bool=False,
             hste_riemannian: bool=False,
+            hste_clip: bool=False,
             gyration_only: bool=False,
             block_hste: bool=False,
             block_hste_pt: bool=False,
@@ -689,6 +720,7 @@ class VectorQuantization(nn.Module):
         self.ema = ema
         self.hste = hste
         self.hste_riemannian = hste_riemannian
+        self.hste_clip = hste_clip
         self.gyration_only = gyration_only
         # Block-level STE (--block_hste / --block_hste_pt): the per-layer quantize is
         # returned fully DETACHED (codebooks learn from the codebook loss only, as
@@ -723,7 +755,7 @@ class VectorQuantization(nn.Module):
     def codebook(self):
         return self._codebook.embed
 
-    def forward(self, x): # quantizes x, computes loss depending on distance to codes, properly propagates gradients
+    def forward(self, x, compute_commitment: bool=True): # quantizes x, computes loss depending on distance to codes, properly propagates gradients
         device = x.device
         quantize, embed_ind = self._codebook(x)
 
@@ -739,14 +771,14 @@ class VectorQuantization(nn.Module):
                 quantize = quantize_raw.detach()
             elif self.hste:
                 quantize = HyperbolicSTE.apply(x, quantize, self.c, self.hste_riemannian,
-                                               self.gyration_only)
+                                               self.gyration_only, self.hste_clip)
             else:
                 quantize = x + (quantize - x).detach()
 
         loss = torch.tensor([0.0], device=device, requires_grad=self.training)
 
         if self.training:
-            if self.commitment_weight > 0:
+            if self.commitment_weight > 0 and compute_commitment:
                 if self.c > 0:
                     commit_loss = hyperbolic_distance_sq(quantize.detach(), x, self.c).mean()
                 else:
@@ -779,6 +811,89 @@ class ResidualVectorQuantization(nn.Module):
             self.entailment_cone_loss_fn = HyperbolicEntailmentConeLoss(K=0.1, c=self.c)
         self.new_method = kwargs.pop("new_method", True)
         self.gradient_correction = kwargs.pop("gradient_correction", False)
+        # --A5: commitment losses only at the FIRST and LAST RQ steps. The last
+        # step's commit loss is computed on a parallel residual chain that is
+        # never detached (and in which the codes ARE detached), so its gradient
+        # flows back to the encoder through the true Jacobians of every Möbius
+        # residual update — restoring the deep-layer commitment signal that
+        # --gradient_correction severs, via one controlled path instead of n_q
+        # conflicting ones. Works with or without gc; intermediate layers
+        # compute no commitment loss at all.
+        self.A5 = kwargs.pop("A5", False)
+        if self.A5 and (self.c <= 0 or not self.new_method):
+            raise ValueError("--A5 requires c > 0 and --new_method (it is defined "
+                             "on the hyperbolic new_method residual chain)")
+        # --A4_v2: strict gradient correction. Vanilla gc only detaches the
+        # residual AFTER each step, so layer 0's commitment still leaks to the
+        # encoder through r0. A4_v2 also detaches the FIRST residual, so NO
+        # per-layer commitment loss reaches the encoder. Safe only with a block
+        # STE (recon flows via the separate r0 hop / tangent identity, not the
+        # loop residual); r0 itself stays attached, as does residual_open for A5.
+        # Combined with --A5 this leaves exactly ONE commit path: the last-layer
+        # chain (A5's first-step commit is killed too).
+        self.A4_v2 = kwargs.pop("A4_v2", False)
+        # --block_recon: the exact opposite ablation to --A4_v2. It KILLS the
+        # block-STE recon hop (the r0 -> Q HSTE for block_hste_pt / the tangent
+        # identity for block_hste), so NO reconstruction gradient reaches the
+        # encoder, while every commitment path is left untouched (under vanilla
+        # gc that is layer 0's coarse-commit leak). The encoder is then trained
+        # by commitment alone. Requires a block STE (with a per-layer STE the
+        # codes would still carry the recon gradient and this would be a no-op).
+        self.block_recon = kwargs.pop("block_recon", False)
+        if self.block_recon and not (kwargs.get("block_hste", False)
+                                     or kwargs.get("block_hste_pt", False)):
+            raise ValueError("--block_recon kills the block-STE recon hop; it "
+                             "requires --block_hste or --block_hste_pt")
+        if self.block_recon and self.A4_v2:
+            raise ValueError("--block_recon and --A4_v2 are opposite ablations "
+                             "(block recon vs block commit); set at most one")
+        # --a6 / --a7: per-layer RECONSTRUCTION-gradient routing (keep-first /
+        # keep-last). They truncate the eq:stack sum over quantizers to a single
+        # term by detaching all but one per-layer code when the Möbius sum
+        # quantized_out is assembled, so only that code carries the recon
+        # gradient back to the encoder:
+        #   --a6 keeps layer 0   -> the i=1 term (empty product; cleanest path).
+        #   --a7 keeps layer N-1 -> the i=N term (full product chain A_{N-1}..A_1,
+        #                           telescoped through every transport).
+        # These are PURE recon routers: commit / codebook losses and EMA are
+        # untouched, so they are orthogonal to the commit routers (gc / A5 /
+        # A4_v2). Under a block STE (block_hste / block_hste_pt) every per-layer
+        # code is already detached, so a6/a7 are inert there (the block hop is
+        # the sole recon path) — composable with A4 with no effect. NOTE a7 + gc
+        # is degenerate: gc detaches the residual chain, severing a7's keep-last
+        # path, so ~no recon reaches the encoder (run a7 with gc OFF).
+        self.a6 = kwargs.pop("a6", False)
+        self.a7 = kwargs.pop("a7", False)
+        # --a6.1 / --a7.1: SUM routing. The encoder receives BOTH the A4
+        # block-hop recon gradient (r0 -> Q, single hop) AND the a6 (keep-first)
+        # / a7 (keep-last) per-layer gradient, ADDED together. Implemented in
+        # forward via the value-exact identity Q + Q_block - Q_block.detach():
+        # quantized_out keeps the per-layer keep-one path live, and a separate
+        # block hop on the detached fold contributes the A4 gradient. Per-layer
+        # codes are kept ATTACHED (block_ste forced off below), and per-layer
+        # HSTE is required (the summed per-layer path is a HyperbolicSTE).
+        self.a6_1 = kwargs.pop("a6_1", False)
+        self.a7_1 = kwargs.pop("a7_1", False)
+        # --a8: FULL SUM routing — the un-truncated sibling of a6.1/a7.1. The
+        # encoder receives the WHOLE per-layer recon fold (every code stays
+        # attached, so the recon gradient accumulates over all quantizer steps,
+        # A3-style) PLUS the A4 block hop on top, added via the same value-exact
+        # Q + Q_block - Q_block.detach() identity. No keep-one truncation. Use
+        # with --hste (per-layer HSTE) and gc OFF; pair with --commitment_weight 0
+        # to leave reconstruction as the only encoder signal.
+        self.a8 = kwargs.pop("a8", False)
+        _routers = [self.a6, self.a7, self.a6_1, self.a7_1, self.a8]
+        if any(_routers) and (self.c <= 0 or not self.new_method):
+            raise ValueError("--a6/--a7/--a6.1/--a7.1/--a8 require c > 0 and "
+                             "--new_method (they route the recon gradient on the "
+                             "hyperbolic residual chain)")
+        if sum(bool(r) for r in _routers) > 1:
+            raise ValueError("--a6, --a7, --a6.1, --a7.1, --a8 are mutually "
+                             "exclusive (keep-first / keep-last / +block-hop sum / "
+                             "full sum); set at most one")
+        if (self.a6_1 or self.a7_1) and not kwargs.get("hste", False):
+            raise ValueError("--a6.1/--a7.1 require --hste (the summed per-layer "
+                             "path is a per-layer HyperbolicSTE)")
         # Shaping of the tangent vector before exp_map0 (c>0 only). Both push
         # residuals off the origin so the nearest-code argmax discriminates by
         # direction; at the origin all same-radius codes are ~equidistant -> collapse.
@@ -787,6 +902,11 @@ class ResidualVectorQuantization(nn.Module):
         #     ball-radius = encoder_shell/sqrt(c). Removes the magnitude DOF so the
         #     encoder cannot collapse residuals to the origin. Takes precedence.
         self.encoder_scale = kwargs.pop("encoder_scale", 1.0)
+        # When >0 (and encoder_scale<=0), the auto-calibrated scale is tracked with
+        # this EMA decay instead of being frozen after the first batch — see
+        # _shape_tangent. Keeps the median residual at _enc_target as the encoder
+        # output-magnitude distribution drifts during training.
+        self.encoder_scale_ema = kwargs.pop("encoder_scale_ema", 0.0)
         self.encoder_shell = kwargs.pop("encoder_shell", 0.0)
         # When True (c>0 only), the codebook_dim bottleneck is a EUCLIDEAN nn.Linear
         # applied in tangent space BEFORE exp_map0 (and after log_map0 on decode),
@@ -813,6 +933,7 @@ class ResidualVectorQuantization(nn.Module):
         if self.block_hste and self.block_hste_pt:
             raise ValueError("--block_hste and --block_hste_pt are mutually exclusive")
         self.hste_riemannian = kwargs.get("hste_riemannian", False)
+        self.hste_clip = kwargs.get("hste_clip", False)
         self.gyration_only = kwargs.get("gyration_only", False)
         # First-batch tangent-norm auto-calibration (active when encoder_scale<=0):
         # a single global scale is fitted once so the median residual lands at
@@ -833,6 +954,14 @@ class ResidualVectorQuantization(nn.Module):
         for i in range(num_quantizers):
             layer_kwargs = kwargs.copy()
             self.layers.append(VectorQuantization(**layer_kwargs))
+
+        # --a6.1/--a7.1 need the per-layer codes ATTACHED so their per-layer STE
+        # gradient is live (it gets summed with the block hop in forward).
+        # block_hste_pt would otherwise set block_ste -> detach every code; turn
+        # it back off on each layer (the block hop is added explicitly in forward).
+        if self.a6_1 or self.a7_1 or self.a8:
+            for layer in self.layers:
+                layer.block_ste = False
         self.remove = kwargs.get("remove", 0)
         dim = kwargs.get("dim", 256)
         codebook_dim = kwargs.get("codebook_dim", dim)
@@ -892,13 +1021,21 @@ class ResidualVectorQuantization(nn.Module):
             # the boundary where hyperbolic_distance_sq's atanh clamp zeroes the
             # gradient. The scalar is frozen after the first batch and restored from
             # checkpoints; preserves per-vector magnitude variation.
-            if self.training and self._enc_calibrated.item() == 0:
+            if self.training and (self._enc_calibrated.item() == 0
+                                  or self.encoder_scale_ema > 0):
                 with torch.no_grad():
                     sqrt_c = self.c ** 0.5
                     med = x.norm(dim=-1).median().clamp_min(1e-8)
                     target_norm = math.atanh(min(self._enc_target, 1 - 1e-6)) / sqrt_c
-                    self._enc_scale.fill_(float(target_norm / med))
-                    self._enc_calibrated.fill_(1)
+                    batch_scale = float(target_norm / med)
+                    if self._enc_calibrated.item() == 0:
+                        # First batch: set directly (no EMA warm-up bias).
+                        self._enc_scale.fill_(batch_scale)
+                        self._enc_calibrated.fill_(1)
+                    else:
+                        # EMA tracking of the drifting encoder magnitude.
+                        d = self.encoder_scale_ema
+                        self._enc_scale.mul_(d).add_((1.0 - d) * batch_scale)
             x = x * self._enc_scale
         elif self.encoder_scale != 1.0:
             x = x * self.encoder_scale
@@ -989,6 +1126,24 @@ class ResidualVectorQuantization(nn.Module):
 
         return rearrange(quantized_out, "b n d -> b d n")
 
+    def _recon_route(self, all_quantized):
+        """--a6/--a7 (and the keep-one half of --a6.1/--a7.1) recon routing.
+
+        Returns the per-layer codes to fold into quantized_out, detaching all
+        but the kept layer so only that layer's STE backpropagates the recon
+        gradient to the encoder. Keep-first (a6 / a6.1) -> layer 0 = eq:stack
+        i=1 term; keep-last (a7 / a7.1) -> last layer = i=N term, the full
+        transport chain. For a6.1/a7.1 this keep-one path is the per-layer half
+        of the sum; the A4 block hop is added on top in forward. Identity when
+        no router is set, at eval, or under a block STE (codes already detached
+        -> per-code detach is a no-op). Forward values are unchanged either way.
+        """
+        if not self.training or not (self.a6 or self.a7 or self.a6_1 or self.a7_1):
+            return all_quantized
+        keep = 0 if (self.a6 or self.a6_1) else len(all_quantized) - 1
+        return [q if i == keep else q.detach()
+                for i, q in enumerate(all_quantized)]
+
     def forward(self, x, n_q: tp.Optional[int]=None, approx: bool=False):
         x = rearrange(x, "b d n -> b n d")
         if self.c > 0:
@@ -1018,10 +1173,34 @@ class ResidualVectorQuantization(nn.Module):
         if self.new_method and self.c > 0:
             if self.diag:
                 self._diag_reset(n_q)
+            # --A5: parallel residual chain for the last layer's commitment loss.
+            # Same VALUES as `residual` (detaches change no values, so indices /
+            # codebook losses / EMA stats are identical), but never detached as a
+            # whole — only the codes inside it are — so the last commit loss keeps
+            # an open gradient path to the encoder through every Möbius update,
+            # regardless of gc / block-STE detaches.
+            a5 = self.A5 and self.training
+            # Keep the attached r0 for A5's open chain BEFORE any detach below.
+            residual_open = residual
+            # --A4_v2 (strict gc): detach the FIRST residual too, so NO commitment
+            # loss reaches the encoder. Vanilla gc only detaches the residual
+            # AFTER each step, so layer 0 still leaks the coarsest commit term
+            # through r0. Safe only with a block STE, where the recon gradient
+            # reaches the encoder via the separate hop on r0 (block_hste_pt) / the
+            # tangent identity (block_hste) rather than through this loop residual;
+            # r0 itself stays attached, as does residual_open for A5.
+            if self.training and self.A4_v2 and self.gradient_correction and (self.block_hste or self.block_hste_pt):
+                residual = residual.detach()
             for i, layer in enumerate(self.layers[:n_q]):
                 if self.diag:
                     self._diag_layer_in(i, residual)
-                quantized, indices, loss = layer(residual)
+                if a5:
+                    is_last = i == n_q - 1
+                    quantized, indices, loss = layer(
+                        residual_open if is_last else residual,
+                        compute_commitment=(i == 0 or is_last))
+                else:
+                    quantized, indices, loss = layer(residual)
                 all_quantized.append(quantized)
                 if self.diag:
                     self.diag_data['q_frac'][i] = self._diag_radius(quantized)
@@ -1049,6 +1228,9 @@ class ResidualVectorQuantization(nn.Module):
                 residual = project(mobius_add(-quantized, residual, self.c), self.c)
                 if self.training and self.gradient_correction:
                     residual = residual.detach()
+                if a5 and i < n_q - 1:
+                    residual_open = project(
+                        mobius_add(-quantized.detach(), residual_open, self.c), self.c)
 
                 if self.dot_product_weight > 0:
                     q_log = log_map0(quantized, self.c).detach()
@@ -1059,16 +1241,38 @@ class ResidualVectorQuantization(nn.Module):
                 all_indices.append(indices)
                 all_losses.append(loss)
 
-            quantized_out = all_quantized[-1]
-            for q in reversed(all_quantized[:-1]):
+            # --a6/--a7 recon routing: keep only the first (a6) or last (a7)
+            # code attached so only that layer's STE carries the recon gradient
+            # to the encoder; others contribute value but no gradient. No-op
+            # under a block STE (codes already detached) and at eval.
+            codes = self._recon_route(all_quantized)
+            quantized_out = codes[-1]
+            for q in reversed(codes[:-1]):
                 quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
 
-            if self.block_hste_pt and self.training:
+            if (self.a6_1 or self.a7_1 or self.a8) and self.training:
+                # --a6.1/--a7.1/--a8 SUM routing: encoder gradient = per-layer
+                # gradient  +  A4 block-hop gradient. For a6.1/a7.1 the per-layer
+                # half is the keep-one fold; for a8 `_recon_route` is a no-op so
+                # it is the FULL fold (recon accumulates over all steps).
+                # `quantized_out` is the per-layer fold (value Q, per-layer STE).
+                # Build the A4 hop on a separately-detached full fold (value Q, no
+                # per-layer grad) and add it via the value-exact identity
+                # Q + Q_block - Q_block.detach(): forward stays exactly Q, while
+                # the backward delivers BOTH graphs' gradients to the encoder.
+                q_block = all_quantized[-1].detach()
+                for q in reversed(all_quantized[:-1]):
+                    q_block = project(mobius_add(q.detach(), q_block, self.c), self.c)
+                q_block = HyperbolicSTE.apply(
+                    r0, q_block, self.c, self.hste_riemannian,
+                    self.gyration_only, self.hste_clip)
+                quantized_out = quantized_out + q_block - q_block.detach()
+            elif self.block_hste_pt and self.training and not self.block_recon:
                 # single block-level HSTE hop Q -> r0 on the ball (per-layer codes
                 # are detached, so this is the only recon path to the encoder)
                 quantized_out = HyperbolicSTE.apply(
                     r0, quantized_out, self.c, self.hste_riemannian,
-                    self.gyration_only)
+                    self.gyration_only, self.hste_clip)
 
             if self.requires_projection and not self.tangent_proj:
                 quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
@@ -1078,7 +1282,7 @@ class ResidualVectorQuantization(nn.Module):
                 distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
 
             quantized_out = log_map0(quantized_out, self.c)
-            if self.block_hste and self.training:
+            if self.block_hste and self.training and not self.block_recon:
                 # block-level identity STE in tangent coordinates (x = shaped tangent)
                 quantized_out = x + (quantized_out - x).detach()
             if self.requires_projection and self.tangent_proj:
@@ -1133,17 +1337,19 @@ class ResidualVectorQuantization(nn.Module):
             if self.c > 0:
                 # for q in reversed(all_quantized):
                 #     quantized_out = project(mobius_add(q, quantized_out, self.c), self.c)
-                quantized_out = all_quantized[0]
-                for q in all_quantized[1:]:
+                # --a6/--a7 recon routing (see _recon_route); no-op when unset.
+                codes = self._recon_route(all_quantized)
+                quantized_out = codes[0]
+                for q in codes[1:]:
                     quantized_out = project(mobius_add(quantized_out, q, self.c), self.c)
 
-                if self.block_hste_pt and self.training:
+                if self.block_hste_pt and self.training and not self.block_recon:
                     # single block-level HSTE hop Q -> r0 on the ball (per-layer
                     # codes are detached, so this is the only recon path to the
                     # encoder)
                     quantized_out = HyperbolicSTE.apply(
                         r0, quantized_out, self.c, self.hste_riemannian,
-                        self.gyration_only)
+                        self.gyration_only, self.hste_clip)
 
                 if self.requires_projection and not self.tangent_proj:
                     quantized_out = self.project_out(ManifoldTensor(quantized_out, manifold=self.project_out.manifold)).tensor
@@ -1153,7 +1359,7 @@ class ResidualVectorQuantization(nn.Module):
                     distance = hyperbolic_distance_sq(diff, torch.zeros_like(diff), self.c).mean()
 
                 quantized_out = log_map0(quantized_out, self.c)
-                if self.block_hste and self.training:
+                if self.block_hste and self.training and not self.block_recon:
                     # block-level identity STE in tangent coordinates (x = shaped tangent)
                     quantized_out = x + (quantized_out - x).detach()
                 if self.requires_projection and self.tangent_proj:

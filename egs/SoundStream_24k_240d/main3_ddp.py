@@ -323,6 +323,45 @@ def get_args():
         '--gradient_correction', action='store_true',
         help='Detach the residual after each quantization step (gradient correction)')
     parser.add_argument(
+        '--A5', action='store_true',
+        help='Commitment loss only at the first and last RQ steps; the last one '
+             'is computed on a never-detached residual chain so its gradient '
+             'reaches the encoder through all Mobius updates even under '
+             '--gradient_correction (combine with the A4 config).')
+    parser.add_argument(
+        '--A4_v2', action='store_true',
+        help='Strict gradient correction: also detach the FIRST residual so NO '
+             'per-layer commitment loss reaches the encoder (vanilla gc still '
+             'leaks layer 0 through r0). Requires the A4 config; with --A5 leaves '
+             'only the last-layer commit chain.')
+    parser.add_argument(
+        '--a6', action='store_true',
+        help='Keep-first recon routing: only layer 0 carries the reconstruction '
+             'gradient to the encoder (eq:stack i=1 term). Pure recon router; '
+             'leaves all commitment losses intact (unlike gc). c>0 + per-layer '
+             'STE; inert under a block STE. Mutually exclusive with --a7.')
+    parser.add_argument(
+        '--a7', action='store_true',
+        help='Keep-last recon routing: only the last layer carries the recon '
+             'gradient (eq:stack i=N term, full transport chain). Per-layer '
+             'realization of the A4 block hop. Run with gc OFF (gc severs the '
+             'chain). Mutually exclusive with --a6.')
+    parser.add_argument(
+        '--a6.1', dest='a6_1', action='store_true',
+        help='SUM routing: encoder recon gradient = A4 block-hop grad + a6 '
+             '(keep-first) per-layer grad, added. Requires --hste; keeps per-layer '
+             'codes attached. Mutually exclusive with a6/a7/a7.1.')
+    parser.add_argument(
+        '--a7.1', dest='a7_1', action='store_true',
+        help='SUM routing: encoder recon gradient = A4 block-hop grad + a7 '
+             '(keep-last) per-layer grad, added. Requires --hste. Mutually '
+             'exclusive with a6/a7/a6.1.')
+    parser.add_argument(
+        '--a8', action='store_true',
+        help='FULL-SUM routing: A4 block-hop grad + ALL per-layer recon grad '
+             '(un-truncated sibling of a6.1/a7.1). Requires --new_method; keeps '
+             'per-layer codes attached. Mutually exclusive with a6/a7/a6.1/a7.1.')
+    parser.add_argument(
         '--embed_init_scale', type=float, default=1.0,
         help='Scale factor for embedding initialization')
     parser.add_argument(
@@ -347,6 +386,17 @@ def get_args():
              '--hste_riemannian/--gyration_only apply to the hop. '
              'Mutually exclusive with --block_hste.')
     parser.add_argument(
+        '--hste_clip', action='store_true',
+        help='(c>0) HSTE backward: cap the per-vector outgoing grad norm at the '
+             'incoming norm (net conformal amplification <= 1, direction '
+             'preserved). Alternative to --hste_riemannian on the (block) hop.')
+    parser.add_argument(
+        '--leaky_clamp', action='store_true',
+        help='(c>0) Replace the hard atanh clamp in hyperbolic_distance_sq with '
+             'a C1 linear extension beyond 1-1e-3, so saturated commit/codebook '
+             'distances keep a restoring gradient instead of going flat '
+             '(anti-collapse). Off by default; affects only this run.')
+    parser.add_argument(
         '--tangent_proj', action='store_true',
         help='(c>0 only) Put the codebook_dim bottleneck as a Euclidean nn.Linear '
              'BEFORE exp_map0 (and after log_map0), so exp_map/codebooks/quantization '
@@ -366,6 +416,13 @@ def get_args():
              'scale is fitted so the median residual lands at radius 0.5 (interior), '
              'then frozen. Keeps per-vector magnitude variation, unlike --encoder_shell.')
     parser.add_argument(
+        '--encoder_scale_ema', type=float, default=0.0,
+        help='If >0 (c>0 only, requires --encoder_scale<=0), the auto-calibrated '
+             'global tangent scale is NOT frozen after the first batch but tracked '
+             'with this EMA decay: each training step the scale is nudged so the '
+             'median residual stays at radius 0.5 as the encoder output-magnitude '
+             'distribution drifts during training. Typical value 0.99.')
+    parser.add_argument(
         '--encoder_shell', type=float, default=0.0,
         help='If >0 (c>0 only), L2-normalise each encoder output so exp_map0 lands '
              'on a fixed ball-radius = encoder_shell/sqrt(c). Removes the magnitude '
@@ -377,6 +434,12 @@ def get_args():
              'ball radius. Keeps codes off the boundary, where hyperbolic_distance_sq '
              'saturates its atanh clamp and zeroes the commit/codebook gradients '
              '(the cause of hyperbolic codebook collapse).')
+    parser.add_argument(
+        '--target_max_recon', type=float, default=0.0,
+        help='If >0 (c>0 only), set --code_max_radius automatically from n_q so the '
+             'worst-case (all codes collinear) Mobius-sum reconstruction lands at '
+             'this fraction of the ball radius: cap = tanh(atanh(T)/n_q). '
+             'Curvature-independent; overrides any explicit --code_max_radius.')
     args = parser.parse_args()
     if 'SLURM_JOB_ID' in os.environ:
         time_str = os.environ['SLURM_JOB_ID']
@@ -425,6 +488,10 @@ def main_worker(local_rank, args):
     # torch.autograd.set_detect_anomaly(True)
     #CUDA_VISIBLE_DEVICES = int(args.local_rank)
     logger = Logger(args)
+    if args.leaky_clamp:
+        from academicodec.quantization import core_vq as _core_vq
+        _core_vq.set_leaky_dist_clamp(True)
+        print('[leaky_clamp] C1 atanh extension active in hyperbolic_distance_sq')
     # 240倍下采
     # if args.constructive:
     #     args.threshold_ema_dead_code = 0
@@ -437,10 +504,14 @@ def main_worker(local_rank, args):
                               sample_rate=args.sr, bins=args.bins, c=args.c, ema=args.ema, kmeans_init=args.kmeans_init,
                               pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
                               codebook_dim=args.codebook_dim, new_method=args.new_method, approx=args.approx, hste=args.hste, hste_riemannian=args.hste_riemannian,
+                              hste_clip=args.hste_clip,
                               gyration_only=args.gyration_only, block_hste=args.block_hste,
                               block_hste_pt=args.block_hste_pt,
-                              gradient_correction=args.gradient_correction, encoder_scale=args.encoder_scale,
+                              gradient_correction=args.gradient_correction, A5=args.A5, A4_v2=args.A4_v2,
+                              a6=args.a6, a7=args.a7, a6_1=args.a6_1, a7_1=args.a7_1, a8=args.a8,
+                              encoder_scale=args.encoder_scale, encoder_scale_ema=args.encoder_scale_ema,
                               encoder_shell=args.encoder_shell, code_max_radius=args.code_max_radius,
+                              target_max_recon=args.target_max_recon,
                               embed_init_scale=args.embed_init_scale, tangent_proj=args.tangent_proj)
     #print(soundstream)
     msd = MultiScaleDiscriminator()

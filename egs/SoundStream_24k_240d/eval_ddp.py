@@ -149,6 +149,17 @@ def get_args():
     parser.add_argument(
         '--new_method', action='store_true',
         help='match training: left-subtraction encoding / right-associative decoding (default: False)')
+    # geometry / codebook flags needed to reconstruct hyperbolic + dim-64 models
+    parser.add_argument('--codebook_dim', type=int, default=None,
+                        help='low-dim codebook bottleneck (must match training; None=D)')
+    parser.add_argument('--hste', action='store_true')
+    parser.add_argument('--hste_riemannian', action='store_true')
+    parser.add_argument('--gradient_correction', action='store_true')
+    parser.add_argument('--block_hste_pt', action='store_true')
+    parser.add_argument('--tangent_proj', action='store_true')
+    parser.add_argument('--encoder_scale', type=float, default=1.0)
+    parser.add_argument('--encoder_shell', type=float, default=0.0)
+    parser.add_argument('--code_max_radius', type=float, default=0.0)
     args = parser.parse_args()
     
     if 'SLURM_JOB_ID' in os.environ:
@@ -204,7 +215,13 @@ def main_worker(local_rank, args):
                               target_bandwidths=args.target_bandwidths,
                               sample_rate=args.sr, exponential_lambda=0.0, uniform=False,
                               ema=args.ema, kmeans_init=args.kmeans_init, new_method=args.new_method,
-                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove)
+                              pre_quant_batchnorm=args.pre_quant_batchnorm, remove=args.remove,
+                              codebook_dim=args.codebook_dim, hste=args.hste,
+                              hste_riemannian=args.hste_riemannian,
+                              gradient_correction=args.gradient_correction,
+                              block_hste_pt=args.block_hste_pt, tangent_proj=args.tangent_proj,
+                              encoder_scale=args.encoder_scale, encoder_shell=args.encoder_shell,
+                              code_max_radius=args.code_max_radius)
     msd = MultiScaleDiscriminator()
     mpd = MultiPeriodDiscriminator()
     stft_disc = MultiScaleSTFTDiscriminator(filters=32)

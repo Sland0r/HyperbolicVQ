@@ -15,12 +15,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import geoopt
 from academicodec.quantization.vq import ResidualVectorQuantizer
-from rec_1.amazon_dataset import prepare_data
+from rec_1.amazon_dataset import prepare_data, DATASET_DIR
 
 class HRQVAE(nn.Module):
     def __init__(self, input_dim, hidden_dim, embed_dim, n_q=4, bins=256, c=1.0,
                  kmeans_init=False, ema=False, new_method=False, hste=False, approx=False,
-                 hste_riemannian=False, gradient_correction=False):
+                 hste_riemannian=False, gradient_correction=False, block_hste_pt=False,
+                 hste_clip=False, a6_1=False, a7_1=False,
+                 a6=False, a7=False, a8=False, A4_v2=False, A5=False):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -44,6 +46,15 @@ class HRQVAE(nn.Module):
             approx=approx,
             hste_riemannian=hste_riemannian,
             gradient_correction=gradient_correction,
+            block_hste_pt=block_hste_pt,
+            hste_clip=hste_clip,
+            a6_1=a6_1,
+            a7_1=a7_1,
+            a6=a6,
+            a7=a7,
+            a8=a8,
+            A4_v2=A4_v2,
+            A5=A5,
         )
         self.decoder = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim // 4),
@@ -78,7 +89,7 @@ def train(args):
     log(f"Starting VAE training with c={args.c}")
     log(f"Args: {vars(args)}")
 
-    _, item_catalog, _, _, embeddings_file = prepare_data()
+    _, item_catalog, _, _, embeddings_file = prepare_data(args.dataset)
     embeddings = torch.load(embeddings_file)
 
     log(f"Loaded {embeddings.shape[0]} item embeddings of dimension {embeddings.shape[1]}")
@@ -90,7 +101,12 @@ def train(args):
                    kmeans_init=args.kmeans_init, ema=args.ema,
                    new_method=args.new_method, hste=args.hste, approx=args.approx,
                    hste_riemannian=args.hste_riemannian,
-                   gradient_correction=args.gradient_correction).to(args.device)
+                   gradient_correction=args.gradient_correction,
+                   block_hste_pt=args.block_hste_pt,
+                   hste_clip=args.hste_clip,
+                   a6_1=args.a6_1, a7_1=args.a7_1,
+                   a6=args.a6, a7=args.a7, a8=args.a8,
+                   A4_v2=args.A4_v2, A5=args.A5).to(args.device)
 
     if args.c > 0:
         manifold_params = []
@@ -279,7 +295,7 @@ def train(args):
         perplexity = entropy.exp().item()
         log(f"  Level {q}: {unique_at_level}/{args.bins} codebook entries used, perplexity: {perplexity:.2f}")
 
-    codes_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}.pt"
+    codes_file = os.path.join(DATASET_DIR, f"{args.dataset.lower()}_item_codes_c{args.c}{args.codes_tag}.pt")
     torch.save(all_codes, codes_file)
     log(f"Saved {all_codes.shape[0]} discrete codes to {codes_file}")
 
@@ -307,7 +323,7 @@ def train(args):
         n_unique_full = torch.unique(all_codes_dedup, dim=0).shape[0]
         log(f"Unique full sequences after dedup: {n_unique_full}/{num_items} "
             f"(ratio {n_unique_full / num_items:.4f})")
-        dedup_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}_dedup.pt"
+        dedup_file = os.path.join(DATASET_DIR, f"{args.dataset.lower()}_item_codes_c{args.c}_dedup{args.codes_tag}.pt")
         torch.save(all_codes_dedup, dedup_file)
         log(f"Saved dedup codes {tuple(all_codes_dedup.shape)} to {dedup_file}")
 
@@ -315,6 +331,11 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="Beauty")
+    parser.add_argument("--codes_tag", type=str, default="",
+                        help='Optional suffix appended to the saved codes filename '
+                             'so concurrent runs (same c/dataset) do not clobber '
+                             'each other; train_recommender must use the same tag.')
     parser.add_argument("--input_dim", type=int, default=768)
     parser.add_argument("--hidden_dim", type=int, default=512)
     parser.add_argument("--embed_dim", type=int, default=32)
@@ -337,6 +358,33 @@ if __name__ == "__main__":
                         help='Use Riemannian (conformal-factor scaled) gradient in the hyperbolic STE')
     parser.add_argument("--gradient_correction", action='store_true',
                         help='Detach the residual after each quantization step (gradient correction)')
+    parser.add_argument("--block_hste_pt", action='store_true',
+                        help='Block-level PT-STE')
+    parser.add_argument("--hste_clip", action='store_true',
+                        help='Cap the HSTE outgoing gradient norm at the incoming norm (net conformal amplification <= 1)')
+    parser.add_argument("--a6.1", dest="a6_1", action='store_true',
+                        help='SUM routing: encoder recon grad = A4 block-hop grad + a6 '
+                             '(keep-first) per-layer grad. Requires --new_method --hste '
+                             '--block_hste_pt --hste_riemannian.')
+    parser.add_argument("--a7.1", dest="a7_1", action='store_true',
+                        help='SUM routing: encoder recon grad = A4 block-hop grad + a7 '
+                             '(keep-last) per-layer grad. Requires --new_method --hste '
+                             '--block_hste_pt --hste_riemannian.')
+    parser.add_argument("--a6", action='store_true',
+                        help='keep-first per-layer recon routing on the A3 per-layer-HSTE '
+                             'base (no block hop). Requires --new_method --hste.')
+    parser.add_argument("--a7", action='store_true',
+                        help='keep-last per-layer recon routing on the A3 per-layer-HSTE '
+                             'base (no block hop). Requires --new_method --hste.')
+    parser.add_argument("--a8", action='store_true',
+                        help='full-sum routing: A4 block hop + ALL per-layer recon '
+                             '(un-truncated sibling of a6.1/a7.1). Requires --new_method.')
+    parser.add_argument("--A4_v2", dest="A4_v2", action='store_true',
+                        help='strict gradient correction: removes the layer-0 commit '
+                             'residual leak that plain gc still passes through.')
+    parser.add_argument("--A5", dest="A5", action='store_true',
+                        help='A4 + last-commit chain (extra commitment term from the '
+                             'final residual stage).')
     parser.add_argument("--quant", type=float, default=1.0,
                         help='Multiplier for the quantizer penalty term')
     parser.add_argument("--recon", type=float, default=1.0,

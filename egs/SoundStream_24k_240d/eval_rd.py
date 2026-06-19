@@ -97,7 +97,7 @@ def main():
     max_nq = max(args.nq_sweep)
     bits_per_cb = math.log2(args.bins)
     # accumulators
-    metrics = {nq: {'pesq': [], 'stoi': [], 'sisdr': [], 'meldist': []} for nq in args.nq_sweep}
+    metrics = {nq: {'pesq': [], 'stoi': [], 'sisdr': [], 'meldist': [], 'mse': []} for nq in args.nq_sweep}
     hist = torch.zeros(max_nq, args.bins, dtype=torch.float64)
     n_codes_total = 0
     n_done = 0
@@ -142,9 +142,10 @@ def main():
                            if mel_ref.shape == torch.log(melspec(e) + 1e-7).shape
                            else (torch.log(melspec(e) + 1e-7)[..., :mel_ref.shape[-1]]
                                  - mel_ref[..., :melspec(e).shape[-1]]).abs().mean())
+                ms = float(((e - r) ** 2).mean())  # time-domain waveform MSE
                 m = metrics[nq]
                 m['pesq'].append(pq); m['stoi'].append(float(st))
-                m['sisdr'].append(sd_); m['meldist'].append(md)
+                m['sisdr'].append(sd_); m['meldist'].append(md); m['mse'].append(ms)
             n_done += 1
             if n_done % 20 == 0:
                 print(f'  {n_done}/{args.n_files} files', flush=True)
@@ -170,11 +171,12 @@ def main():
             'stoi': float(np.mean(m['stoi'])),
             'sisdr': float(np.mean(m['sisdr'])),
             'meldist': float(np.mean(m['meldist'])),
+            'mse': float(np.mean(m['mse'])),
         })
         pt = out['points'][-1]
         print(f"  n_q={nq:2d}  {pt['kbps_nominal']:5.1f} kbps (entropy {pt['kbps_entropy']:5.2f})"
               f"  PESQ={pt['pesq'] if pt['pesq'] else float('nan'):.3f}  STOI={pt['stoi']:.3f}"
-              f"  SI-SDR={pt['sisdr']:6.2f}  melL1={pt['meldist']:.4f}")
+              f"  SI-SDR={pt['sisdr']:6.2f}  melL1={pt['meldist']:.4f}  MSE={pt['mse']:.2e}")
 
     os.makedirs(os.path.dirname(args.out_json) or '.', exist_ok=True)
     with open(args.out_json, 'w') as fh:

@@ -1,0 +1,246 @@
+\begin{thebibliography}{10}
+
+\bibitem{atigh2022hyperbolic}
+Mina~Ghadimi Atigh, Julian Schoep, Erman Acar, Nanne van Noord, and Pascal
+  Mettes.
+\newblock Hyperbolic image segmentation.
+\newblock In {\em Proceedings of the IEEE/CVF Conference on Computer Vision and
+  Pattern Recognition}, 2022.
+
+\bibitem{gumbelvq}
+Alexei Baevski, Steffen Schneider, and Michael Auli.
+\newblock vq-wav2vec: Self-supervised learning of discrete speech
+  representations, 2020.
+
+\bibitem{straight_through_estimator}
+Yoshua Bengio, Nicholas Léonard, and Aaron Courville.
+\newblock Estimating or propagating gradients through stochastic neurons for
+  conditional computation, 2013.
+
+\bibitem{audiolm}
+Zal{\'a}n Borsos, Rapha{\"e}l Marinier, Damien Vincent, Eugene Kharitonov,
+  Olivier Pietquin, Matt Sharifi, Dominik Roblek, Olivier Teboul, David
+  Grangier, Marco Tagliasacchi, and Neil Zeghidour.
+\newblock {AudioLM}: a language modeling approach to audio generation.
+\newblock {\em IEEE/ACM Transactions on Audio, Speech, and Language
+  Processing}, 31:2523--2533, 2023.
+
+\bibitem{bu2025ggball}
+Tianci Bu, Chuanrui Wang, Hao Ma, Haoren Zheng, Xin Lu, and Tailin Wu.
+\newblock Ggball: Graph generative model on poincar\'e ball, 2025.
+
+\bibitem{cannon1997hyperbolic}
+James~W. Cannon, William~J. Floyd, Richard Kenyon, and Walter~R. Parry.
+\newblock Hyperbolic geometry.
+\newblock {\em Flavors of Geometry}, 31:59--115, 1997.
+
+\bibitem{progic}
+Hao Cao, Chengbin Liang, Wenqi Guo, Zhijin Qin, and Jungong Han.
+\newblock Progic: Progressive and lightweight generative image compression with
+  residual vector quantization.
+\newblock {\em arXiv preprint arXiv:2603.02897}, 2026.
+
+\bibitem{hvqvae}
+Shangyu Chen, Pengfei Fang, Mehrtash Harandi, Trung Le, Jianfei Cai, and
+  Dinh~Q. Phung.
+\newblock {HVQ-VAE}: Variational auto-encoder with hyperbolic vector
+  quantization.
+\newblock {\em Computer Vision and Image Understanding}, 258:104392, 2025.
+
+\bibitem{musicgen}
+Jade Copet, Felix Kreuk, Itai Gat, Tal Remez, David Kant, Gabriel Synnaeve,
+  Yossi Adi, and Alexandre D{\'e}foss{\'e}z.
+\newblock Simple and controllable music generation.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~36, 2023.
+
+\bibitem{talkplay}
+Seungheon Doh, Keunwoo Choi, and Juhan Nam.
+\newblock Talkplay: Multimodal music recommendation with large language models.
+\newblock {\em arXiv preprint arXiv:2502.13713}, 2025.
+
+\bibitem{encodec}
+Alexandre Défossez, Jade Copet, Gabriel Synnaeve, and Yossi Adi.
+\newblock High fidelity neural audio compression, 2022.
+
+\bibitem{ganea2018hyperbolic}
+Octavian-Eugen Ganea, Gary B{\'e}cigneul, and Thomas Hofmann.
+\newblock Hyperbolic neural networks.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~31, 2018.
+
+\bibitem{girish2026prosody}
+Girish, Mohd~Mujtaba Akhtar, and Muskaan Singh.
+\newblock Prosody as supervision: Bridging the non-verbal--verbal for
+  multilingual speech emotion recognition, 2026.
+
+\bibitem{hypervq}
+Nabarun Goswami, Yusuke Mukuta, and Tatsuya Harada.
+\newblock Hypervq: Mlr-based vector quantization in hyperbolic space, 2025.
+
+\bibitem{originalvq}
+R.~Gray.
+\newblock Vector quantization.
+\newblock {\em IEEE ASSP Magazine}, 1(2):4--29, 1984.
+
+\bibitem{khrulkov2020hyperbolic}
+Valentin Khrulkov, Leyla Mirvakhabova, Evgeniya Ustinova, Ivan Oseledets, and
+  Victor Lempitsky.
+\newblock Hyperbolic image embeddings.
+\newblock In {\em Proceedings of the IEEE/CVF Conference on Computer Vision and
+  Pattern Recognition}, 2020.
+
+\bibitem{resgen}
+Jaehyeon Kim, Taehong Moon, Keon Lee, and Jaewoong Cho.
+\newblock Efficient generative modeling with residual vector quantization-based
+  tokens.
+\newblock In {\em Proceedings of the 13th International Conference on Learning
+  Representations}, 2025.
+
+\bibitem{collapse_1}
+Adrian Lancucki, Jan Chorowski, Guillaume Sanchez, Ricard Marxer, Nanxin Chen,
+  Hans~J.G.A. Dolfing, Sameer Khurana, Tanel Alumae, and Antoine Laurent.
+\newblock Robust training of vector quantized bottleneck models.
+\newblock In {\em 2020 International Joint Conference on Neural Networks
+  (IJCNN)}, page 1–7. IEEE, July 2020.
+
+\bibitem{lee2022rqvae}
+Doyup Lee, Chiheon Kim, Saehoon Kim, Minsu Cho, and Wook-Shin Han.
+\newblock Autoregressive image generation using residual quantization.
+\newblock In {\em Proceedings of the IEEE/CVF Conference on Computer Vision and
+  Pattern Recognition}, 2022.
+
+\bibitem{li2026llsdr}
+Jingyi Li, Luca~Della Libera, Mirco Ravanelli, and Cem Subakan.
+\newblock Ll-sdr: Low-latency speech enhancement through discrete
+  representations, 2026.
+
+\bibitem{evotok}
+Yan Li, Ning Liao, Xiangyu Zhao, Shaofeng Zhang, Xiaoxing Wang, Yifan Yang,
+  Junchi Yan, and Xue Yang.
+\newblock Evotok: A unified image tokenizer via residual latent evolution for
+  visual understanding and generation.
+\newblock {\em arXiv preprint arXiv:2603.12108}, 2026.
+
+\bibitem{mathieu2019poincare}
+Emile Mathieu, Charline Le~Lan, Chris~J. Maddison, Ryota Tomioka, and Yee~Whye
+  Teh.
+\newblock Continuous hierarchical representations with {P}oincar{\'e}
+  variational auto-encoders.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~32, 2019.
+
+\bibitem{finitescalarquantizationfsq}
+Fabian Mentzer, David Minnen, Eirikur Agustsson, and Michael Tschannen.
+\newblock Finite scalar quantization: Vq-vae made simple, 2023.
+
+\bibitem{mettes2024hyperbolic}
+Pascal Mettes, Mina Ghadimi~Atigh, Martin Keller-Ressel, Jeffrey Gu, and Serena
+  Yeung.
+\newblock Hyperbolic deep learning in computer vision: A survey.
+\newblock {\em International Journal of Computer Vision}, 132:1156--1201, 2024.
+
+\bibitem{nickel2017poincare}
+Maximilian Nickel and Douwe Kiela.
+\newblock Poincar{\'e} embeddings for learning hierarchical representations.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~30, 2017.
+
+\bibitem{petermann2023hyperbolic}
+Darius Petermann, Gordon Wichern, Zhong-Qiu Wang, and Jonathan {Le Roux}.
+\newblock Hyperbolic audio source separation.
+\newblock In {\em Proceedings of Interspeech}, 2023.
+
+\bibitem{hrqvae}
+Piotr Piękos, Subhradeep Kayal, and Alexandros Karatzoglou.
+\newblock Hyperbolic residual quantization: Discrete representations for data
+  with latent hierarchies, 2025.
+
+\bibitem{tiger}
+Shashank Rajput, Nikhil Mehta, Anima Singh, Raghunandan~H. Keshavan, Trung Vu,
+  Lukasz Heldt, Lichan Hong, Yi~Tay, Vinh~Q. Tran, Jonah Samost, Maciej Kula,
+  Ed~H. Chi, and Maheswaran Sathiamoorthy.
+\newblock Recommender systems with generative retrieval.
+\newblock In {\em Advances in Neural Information Processing Systems},
+  volume~36, 2023.
+
+\bibitem{collapse_2}
+Aurko Roy, Ashish Vaswani, Arvind Neelakantan, and Niki Parmar.
+\newblock Theory and experiments on vector quantized autoencoders, 2018.
+
+\bibitem{sala2018representation}
+Frederic Sala, Chris De~Sa, Albert Gu, and Christopher R{\'e}.
+\newblock Representation tradeoffs for hyperbolic embeddings.
+\newblock In {\em Proceedings of the 35th International Conference on Machine
+  Learning}, 2018.
+
+\bibitem{su2026ultralow}
+Tianhui Su, Tien-Ping Tan, Salima Mdhaffar, Yannick Est\`eve, and Aghilas Sini.
+\newblock An ultra-low latency, end-to-end streaming speech synthesis
+  architecture via block-wise generation and depth-wise codec decoding, 2026.
+
+\bibitem{hqvae}
+Yuhta Takida, Yukara Ikemiya, Takashi Shibuya, Kazuki Shimada, Woosung Choi,
+  Chieh-Hsin Lai, Naoki Murata, Toshimitsu Uesaka, Kengo Uchida, Wei-Hsiang
+  Liao, and Yuki Mitsufuji.
+\newblock {HQ-VAE}: Hierarchical discrete representation learning with
+  variational bayes.
+\newblock {\em Transactions on Machine Learning Research}, 2024.
+
+\bibitem{ddbc}
+Teng Tu, Ai~Li, Yunshan Ma, Shuo Xu, Xiaohao Liu, Haokai Ma, Liang Pang, and
+  Tat-Seng Chua.
+\newblock Discrete diffusion for bundle construction.
+\newblock In {\em The Fourteenth International Conference on Learning
+  Representations}, 2026.
+
+\bibitem{ungar2009gyrovector}
+Abraham~Albert Ungar.
+\newblock {\em A Gyrovector Space Approach to Hyperbolic Geometry}.
+\newblock Morgan \& Claypool Publishers, 2009.
+
+\bibitem{vqvae}
+Aaron van~den Oord, Oriol Vinyals, and Koray Kavukcuoglu.
+\newblock Neural discrete representation learning, 2018.
+
+\bibitem{r3vae}
+Qiang Wan, Ze~Yang, Dawei Yang, Ying Fan, Xin Yan, Siyang Liu, Yicong Liu,
+  Chenwei Zhang, Wei Xu, Jiahao Qin, and Ke~Wang.
+\newblock R3-vae: Reference vector-guided rating residual quantization vae for
+  generative recommendation.
+\newblock {\em arXiv preprint arXiv:2604.11440}, 2026.
+
+\bibitem{wang2026varlenrec}
+Minhao Wang, Bowen Wu, and Wei Zhang.
+\newblock Learning variable-length tokenization for generative recommendation,
+  2026.
+
+\bibitem{wu2026quantizer}
+Jinyang Wu, Zihan Pan, Qiquan Zhang, Sailor~Hardik Bhupendra, and Soumik
+  Mondal.
+\newblock Quantizer-aware hierarchical neural codec modeling for speech
+  deepfake detection, 2026.
+
+\bibitem{hyprqvae_recsys}
+Longfeng Wu, Tong Zeng, Giovanni Seni, Zhimin Peng, Bhanu Pratap~Singh Rawat,
+  Si~Zhang, Yao Zhou, Bowen Xu, Lecheng Zheng, Bo~Ji, Yujun Yan, and Dawei
+  Zhou.
+\newblock Hyp{RQ}-{VAE}: Long-tail-aware item indexing for generative
+  recommender systems, 2025.
+
+\bibitem{yao2026zeroshot}
+Shumin Yao, Hui Du, Lifeng Xie, Yaping Sun, Hao Chen, Nan Ma, and Xiaodong Xu.
+\newblock Zero-shot knowledge base resizing for rate-adaptive digital semantic
+  communication, 2026.
+
+\bibitem{ye2026hierarchical}
+Jiaxin Ye, Gaoxiang Cong, Chenhui Wang, Xin-Cheng Wen, Zhaoyang Li, Boyuan Cao,
+  and Hongming Shan.
+\newblock Hierarchical codec diffusion for video-to-speech generation, 2026.
+
+\bibitem{soundstream}
+Neil Zeghidour, Alejandro Luebs, Ahmed Omran, Jan Skoglund, and Marco
+  Tagliasacchi.
+\newblock Soundstream: An end-to-end neural audio codec, 2021.
+
+\end{thebibliography}

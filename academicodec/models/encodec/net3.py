@@ -37,13 +37,23 @@ class SoundStream(nn.Module):
                  approx: bool=False,
                  hste: bool=False,
                  hste_riemannian: bool=False,
+                 hste_clip: bool=False,
                  gyration_only: bool=False,
                  block_hste: bool=False,
                  block_hste_pt: bool=False,
                  gradient_correction: bool=False,
+                 A5: bool=False,
+                 A4_v2: bool=False,
+                 a6: bool=False,
+                 a7: bool=False,
+                 a6_1: bool=False,
+                 a7_1: bool=False,
+                 a8: bool=False,
                  encoder_scale: float=1.0,
+                 encoder_scale_ema: float=0.0,
                  encoder_shell: float=0.0,
                  code_max_radius: float=0.0,
+                 target_max_recon: float=0.0,
                  embed_init_scale: float=1.0,
                  tangent_proj: bool=False):
         super().__init__()
@@ -52,6 +62,16 @@ class SoundStream(nn.Module):
             n_filters=n_filters, dimension=D, ratios=ratios)
         n_q = int(1000 * target_bandwidths[-1] //
                   (math.ceil(sample_rate / self.hop_length) * 10))
+        # --target_max_recon T (c>0 only): derive the per-code radius cap so the
+        # worst-case (all codes collinear) Mobius-sum reconstruction lands at
+        # fraction T of the ball radius. Rapidities add linearly along a ray, so
+        # tanh(n_q * atanh(code_max_radius)) = T  =>  cap = tanh(atanh(T)/n_q).
+        # Curvature-independent because code_max_radius is itself a ball fraction.
+        # Overrides any explicit --code_max_radius.
+        if target_max_recon > 0:
+            code_max_radius = math.tanh(math.atanh(target_max_recon) / n_q)
+            print(f'[target_max_recon] T={target_max_recon} n_q={n_q} '
+                  f'-> code_max_radius={code_max_radius:.6f}')
         self.frame_rate = math.ceil(sample_rate / np.prod(ratios))  # 75
         self.bits_per_codebook = int(math.log2(bins))
         self.target_bandwidths = target_bandwidths
@@ -67,9 +87,12 @@ class SoundStream(nn.Module):
             gyration_weight=gyration_weight,
             c=c, ema=ema, decay=decay, kmeans_init=kmeans_init, remove=remove,
             new_method=new_method, approx=approx, hste=hste, hste_riemannian=hste_riemannian,
+            hste_clip=hste_clip,
             gyration_only=gyration_only, block_hste=block_hste,
             block_hste_pt=block_hste_pt,
-            gradient_correction=gradient_correction, encoder_scale=encoder_scale,
+            gradient_correction=gradient_correction, A5=A5, A4_v2=A4_v2,
+            a6=a6, a7=a7, a6_1=a6_1, a7_1=a7_1, a8=a8,
+            encoder_scale=encoder_scale, encoder_scale_ema=encoder_scale_ema,
             encoder_shell=encoder_shell, code_max_radius=code_max_radius,
             embed_init_scale=embed_init_scale, tangent_proj=tangent_proj)
         self.pre_quant_batchnorm = pre_quant_batchnorm

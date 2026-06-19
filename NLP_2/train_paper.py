@@ -31,7 +31,10 @@ class HRQModel(nn.Module):
     def __init__(self, vocab_size, embed_dim, n_q=4, bins=256, c=1.0,
                  new_method=True, hste=False, hste_riemannian=False, approx=False,
                  commitment_weight=0.25, ema=False, gradient_correction=False,
-                 embed_init_scale=1.0):
+                 embed_init_scale=1.0, block_hste_pt=False, hste_clip=False,
+                 gyration_only=False,
+                 A5=False, A4_v2=False, block_recon=False,
+                 a6=False, a7=False, a6_1=False, a7_1=False, a8=False):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         # Scale down the (default N(0,1)) embedding init so exp_map0(emb) does not
@@ -46,6 +49,17 @@ class HRQModel(nn.Module):
             approx=approx,
             commitment_weight=commitment_weight, ema=ema,
             gradient_correction=gradient_correction,
+            block_hste_pt=block_hste_pt,
+            hste_clip=hste_clip,
+            gyration_only=gyration_only,
+            A5=A5,
+            A4_v2=A4_v2,
+            block_recon=block_recon,
+            a6=a6,
+            a7=a7,
+            a6_1=a6_1,
+            a7_1=a7_1,
+            a8=a8,
         )
         self.c = c
 
@@ -448,7 +462,29 @@ def train(args):
         approx=args.approx, commitment_weight=args.commitment_weight,
         ema=args.ema, gradient_correction=args.gradient_correction,
         embed_init_scale=args.embed_init_scale,
+        block_hste_pt=args.block_hste_pt,
+        hste_clip=args.hste_clip,
+        gyration_only=args.gyration_only,
+        A5=args.A5,
+        A4_v2=args.A4_v2,
+        block_recon=args.block_recon,
+        a6=args.a6,
+        a7=args.a7,
+        a6_1=args.a6_1,
+        a7_1=args.a7_1,
+        a8=args.a8,
     ).to(args.device)
+
+    # --codebook_init_mult: multiply the initial codebook points by a constant.
+    # For c>0 the random init draws radii in (0, 0.5/sqrt(c)] regardless of any
+    # upstream scale (directions are re-normalised in core_vq), so this is the
+    # only knob that actually moves the codebook init radius.
+    if args.codebook_init_mult != 1.0:
+        with torch.no_grad():
+            for qi in range(args.n_q):
+                cb = model.quantizer.vq.layers[qi]._codebook
+                cb.embed.data.mul_(args.codebook_init_mult)
+                cb.embed_avg.data.mul_(args.codebook_init_mult)
 
     save_dir = args.save_dir
     os.makedirs(save_dir, exist_ok=True)
@@ -504,10 +540,21 @@ def train(args):
     log(f"  {'new_method':<25s} {args.new_method}")
     log(f"  {'approx':<25s} {args.approx}")
     log(f"  {'hste':<25s} {args.hste}")
+    log(f"  {'block_hste_pt':<25s} {args.block_hste_pt}")
     log(f"  {'hste_riemannian':<25s} {args.hste_riemannian}")
+    log(f"  {'gyration_only':<25s} {args.gyration_only}")
+    log(f"  {'hste_clip':<25s} {args.hste_clip}")
     log(f"  {'embed_init_scale':<25s} {args.embed_init_scale}")
     log(f"  {'radius_penalty':<25s} {args.radius_penalty}")
     log(f"  {'gradient_correction':<25s} {args.gradient_correction}")
+    log(f"  {'A5':<25s} {args.A5}")
+    log(f"  {'A4_v2':<25s} {args.A4_v2}")
+    log(f"  {'block_recon':<25s} {args.block_recon}")
+    log(f"  {'a6':<25s} {args.a6}")
+    log(f"  {'a7':<25s} {args.a7}")
+    log(f"  {'a6.1':<25s} {args.a6_1}")
+    log(f"  {'a7.1':<25s} {args.a7_1}")
+    log(f"  {'a8':<25s} {args.a8}")
     log(f"  {'grad_clip':<25s} {args.grad_clip}")
     log(f"  {'grad_clip_mode':<25s} {args.grad_clip_mode}")
     log(f"  {'grad_norm':<25s} {args.grad_norm}")
@@ -764,16 +811,76 @@ if __name__ == '__main__':
     parser.add_argument('--new_method', action='store_true')
     parser.add_argument('--approx', action='store_true')
     parser.add_argument('--hste', action='store_true')
+    parser.add_argument('--block_hste_pt', action='store_true')
     parser.add_argument('--hste_riemannian', action='store_true',
                         help='Geometry-exact discount: HyperbolicSTE.backward returns '
                              'the Riemannian gradient at x (skips the ×λ_x² '
                              'Riemannian->Euclidean re-conversion that explodes near '
                              'the ball boundary). Requires --hste.')
+    parser.add_argument('--hste_clip', action='store_true',
+                        help='Cap the per-vector outgoing norm of HyperbolicSTE.backward '
+                             'at the incoming norm, so the net conformal amplification '
+                             'through the module is <= 1 (direction preserved).')
+    parser.add_argument('--gyration_only', action='store_true',
+                        help='Hop backward mode: rotate the Euclidean gradient from q '
+                             'to x by the geometry (gyration) with NO conformal/lambda '
+                             'coefficients at all (magnitude preserved like the '
+                             'Euclidean STE, direction hyperbolically corrected). '
+                             'Alternative to --hste_riemannian on the block hop.')
+    parser.add_argument('--A5', action='store_true',
+                        help='Commitment loss only at the first and last RQ '
+                             'steps; the last one on a never-detached residual '
+                             'chain so its gradient reaches the embedding '
+                             'through all Mobius updates even under '
+                             '--gradient_correction.')
+    parser.add_argument('--A4_v2', action='store_true',
+                        help='Strict gradient correction: also detach the FIRST '
+                             'residual so NO per-layer commitment loss reaches '
+                             'the embedding (vanilla gc still leaks layer 0 '
+                             'through r0). Requires the A4 config; with --A5 '
+                             'leaves only the last-layer commit chain.')
+    parser.add_argument('--block_recon', action='store_true',
+                        help='Opposite ablation to --A4_v2: kill the block-STE '
+                             'recon hop so NO reconstruction gradient reaches the '
+                             'embedding (commit losses untouched -> encoder trained '
+                             'by commitment alone). Requires the A4 block-STE '
+                             'config (--block_hste_pt / --block_hste). Mutually '
+                             'exclusive with --A4_v2.')
+    parser.add_argument('--a6', action='store_true',
+                        help='Keep-first recon routing: only layer 0 carries the '
+                             'reconstruction gradient to the embedding (eq:stack '
+                             'i=1 term). Pure recon router, leaves all commit '
+                             'losses intact. c>0 + per-layer STE. Mutually '
+                             'exclusive with --a7.')
+    parser.add_argument('--a7', action='store_true',
+                        help='Keep-last recon routing: only the last layer carries '
+                             'the recon gradient (eq:stack i=N term, full '
+                             'transport chain). Run with gc OFF. Mutually '
+                             'exclusive with --a6.')
+    parser.add_argument('--a6.1', dest='a6_1', action='store_true',
+                        help='SUM routing: encoder recon grad = A4 block-hop grad '
+                             '+ a6 (keep-first) per-layer grad. Requires --hste. '
+                             'Mutually exclusive with a6/a7/a7.1.')
+    parser.add_argument('--a7.1', dest='a7_1', action='store_true',
+                        help='SUM routing: encoder recon grad = A4 block-hop grad '
+                             '+ a7 (keep-last) per-layer grad. Requires --hste. '
+                             'Mutually exclusive with a6/a7/a6.1.')
+    parser.add_argument('--a8', action='store_true',
+                        help='FULL SUM routing: encoder recon grad = A4 block-hop '
+                             'grad + the WHOLE per-layer fold (every code attached, '
+                             'recon accumulates over all steps; un-truncated '
+                             'a6.1/a7.1). Use with --hste and gc OFF; pair with '
+                             '--commitment_weight 0 for a recon-only encoder. '
+                             'Mutually exclusive with a6/a7/a6.1/a7.1.')
     parser.add_argument('--gradient_correction', action='store_true',
                         help='Detach the residual after each quantization step (gradient correction)')
     parser.add_argument('--embed_init_scale', type=float, default=1.0,
                         help='Multiplier on the embedding init (e.g. 0.05) to keep '
                              'exp_map0(emb) off the ball boundary')
+    parser.add_argument('--codebook_init_mult', type=float, default=1.0,
+                        help='Multiplier applied in-place to the initial codebook '
+                             'points (c>0 random init draws radii in (0, 0.5/sqrt(c)]; '
+                             'this scales them up/down)')
     parser.add_argument('--radius_penalty', type=float, default=0.0,
                         help='Weight of an L2 penalty on ||emb|| that keeps mapped '
                              'embeddings off the ball boundary')

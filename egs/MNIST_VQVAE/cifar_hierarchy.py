@@ -80,11 +80,32 @@ def _latest_best(run_dir):
     return cands[-1] if cands else None
 
 RUNS = [
-    ("euclidean", "/home/acolombo/VAEs/checkpoint/cifar_new/euclidean/23519938/best_47.pth"),
-    ("hyperbolic_c1", "/home/acolombo/VAEs/checkpoint/cifar_new/c1/23519939/best_47.pth"),
-    ("hyperbolic_c1_hste", "/home/acolombo/VAEs/checkpoint/cifar_new/c1_hste/23519941/best_48.pth"),
-    ("hyperbolic_c1_hste_gc", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_hste_gc/23651593")),
+    ("euclidean (c=0)", "/home/acolombo/VAEs/checkpoint/cifar_new/euclidean/23519938/best_47.pth"),
+    ("hyperbolic c=1", "/home/acolombo/VAEs/checkpoint/cifar_new/c1/23519939/best_47.pth"),
+    ("hyperbolic c=1 + hste", "/home/acolombo/VAEs/checkpoint/cifar_new/c1_hste/23519941/best_48.pth"),
+    ("hyperbolic c=1 + hste + grad_corr", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_hste_gc/23651593")),
+    ("hyperbolic c=1 + block_hste", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt/23698257")),
+    ("block_hste no grad_corr", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_nogc/23730612")),
+    ("block_hste clip (no riem)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_clip/23730613")),
+    ("block_hste commit=1", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_com1/23730614")),
+    ("A5 (block_hste + last-commit chain)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_a5/23738364")),
+    ("STRICT gc (block_hste, no commit)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_strictgc/23768938")),
+    ("A4_v2 + A5 (strict gc + last-commit)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_blockpt_a4v2a5/23770219")),
+    ("a6 keep-first (per-layer HSTE)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a6_s42/23776359")),
+    ("a7 keep-last (per-layer HSTE)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a7_s42/23776362")),
+    ("a6.1 (A4 block-hop + a6 sum)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a61_s42/23784118")),
+    ("a7.1 (A4 block-hop + a7 sum)", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a71_s42/23784121")),
+    ("a6.1 +gc", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a61gc_s42/23805015")),
+    ("a7.1 +gc", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a71gc_s42/23805018")),
+    ("A1: HRA, no d-HSTE", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a1_hra_nodhste/23984651")),
+    ("A2: d-HSTE, no HRA", _latest_best("/home/acolombo/VAEs/checkpoint/cifar_new/c1_a2_dhste_nohra/23984646")),
 ]
+# variance reruns (seeds 43/44): auto-discover checkpoint/cifar_new/<variant>_s<seed>/<jobid>/
+import glob as _glob_mod
+for _d in sorted(_glob_mod.glob("/home/acolombo/VAEs/checkpoint/cifar_new/*_s4[34]")):
+    for _jd in sorted(_glob_mod.glob(os.path.join(_d, "*"))):
+        RUNS.append((os.path.basename(_d), _latest_best(_jd)))
+
 RUNS = [(n, c) for n, c in RUNS if c is not None]
 
 

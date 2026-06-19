@@ -12,7 +12,7 @@ torch.backends.cuda.enable_cudnn_sdp(False)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from rec_1.amazon_dataset import prepare_data, AmazonSequenceDataset
+from rec_1.amazon_dataset import prepare_data, AmazonSequenceDataset, DATASET_DIR
 
 
 class PositionalEncoding(nn.Module):
@@ -260,11 +260,11 @@ def run_eval(model, loader, item_offset_padded, trie, args, ks=(5, 10)):
 
 def train(args):
     print("Preparing Amazon dataset...")
-    user_histories_idx, item_catalog, item_to_id, id_to_item, _ = prepare_data()
+    user_histories_idx, item_catalog, item_to_id, id_to_item, _ = prepare_data(args.dataset)
     num_items = len(item_catalog)
 
     suffix = '_dedup' if args.dedup else ''
-    codes_file = f"/home/acolombo/VAEs/dataset/Amazon/item_codes_c{args.c}{suffix}.pt"
+    codes_file = os.path.join(DATASET_DIR, f"{args.dataset.lower()}_item_codes_c{args.c}{suffix}{args.codes_tag}.pt")
     if not os.path.exists(codes_file):
         raise FileNotFoundError(
             f"Item codes not found at {codes_file}. Run train_vae.py first"
@@ -384,6 +384,10 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="Beauty")
+    parser.add_argument("--codes_tag", type=str, default="",
+                        help='Suffix on the codes filename; must match the value '
+                             'passed to train_vae.py for this run.')
     parser.add_argument("--bins", type=int, default=256)
     parser.add_argument("--n_q", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=384)

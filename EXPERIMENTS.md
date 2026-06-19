@@ -108,14 +108,14 @@ Clean single sweep — all four columns trained with identical code/seed/config,
 
 Source: `logs_rec_1/discovery_*.out` (2026-05-30 → 06-04). RQ/HRQ-VAE on MPNet embeddings (768→32, `n_q=4, bins=128`, 5000 ep), then seq2seq recommender on the generated codes. `--dedup` adds a uniqueness tie-break token. Test metrics from the recommender.
 
-| job | c | method flags | uniq. ratio | Recall@5 | Recall@10 | NDCG@10 |
-|---|---|---|---|---|---|---|
-| 23279215 | 0.0 | euclidean baseline (no dedup) | 0.932 | 0.0342 | 0.0513 | 0.0290 |
-| 23320936 | 1.0 | approx, dedup | 0.872 | 0.0388 | 0.0600 | 0.0318 |
-| 23361994 | 1.0 | new_method, approx, dedup | 0.897 | 0.0341 | 0.0537 | 0.0285 |
-| 23365287 | 1.0 | hste, approx, dedup | 0.627 | 0.0330 | 0.0521 | 0.0279 |
-| **23439151** | 1.0 | new+hste+grad_correction, dedup | 0.971 | **0.0391** | **0.0600** | **0.0332** |
-| 23472073 | 1.0 | new+hste+**hste_riemannian**, dedup | 0.975 | 0.0385 | 0.0594 | 0.0323 |
+| job | c | method flags | uniq. ratio | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
+|---|---|---|---|---|---|---|---|
+| 23279215 | 0.0 | euclidean baseline (no dedup) | 0.932 | 0.0342 | 0.0235 | 0.0513 | 0.0290 |
+| 23320936 | 1.0 | approx, dedup | 0.872 | 0.0388 | 0.0250 | 0.0600 | 0.0318 |
+| 23361994 | 1.0 | new_method, approx, dedup | 0.897 | 0.0341 | 0.0222 | 0.0537 | 0.0285 |
+| 23365287 | 1.0 | hste, approx, dedup | 0.627 | 0.0330 | 0.0218 | 0.0521 | 0.0279 |
+| **23439151** | 1.0 | new+hste+grad_correction, dedup | 0.971 | **0.0391** | **0.0264** | **0.0600** | **0.0332** |
+| 23472073 | 1.0 | new+hste+**hste_riemannian**, dedup | 0.975 | 0.0385 | 0.0256 | 0.0594 | 0.0323 |
 
 All c=1.0 runs use `quant=0.01, recon=1000.0, batch=2048`. The two best (23439151, 23472073) are also the cleanest codebooks (uniqueness 0.97+, all 128 entries used per level, per-level PPL ≈ 94/126/126/126).
 
@@ -144,9 +144,10 @@ Source: `eval_full.sh` (jobs 23652530/33/36 baselines) + `eval_gc.sh`/`lp_gc.sh`
 | variant | gen FID ↓ | IS ↑ | Linear Probe ↑ |
 |---|---|---|---|
 | euclidean | 268.50 | 1.790 | **24.90%** |
-| c1 | **241.36** | 1.806 | 16.92% |
+| c1 | 241.36 | 1.806 | 16.92% |
 | c1_hste | 267.11 | 1.863 | 16.39% |
 | c1_hste_gc | 253.79 | **1.868** | 21.25% |
+| c1_blockpt (A4, eval job 23700280) | **233.49** | 1.860 | 13.47% |
 
 *Comparable set. gradient_correction sits mid-pack: 2nd-best gen FID (behind plain c1), best IS, and 2nd-best linear probe (behind Euclidean). No regression vs the other hyperbolic variants.*
 
@@ -308,21 +309,28 @@ New tooling: `eval_rd.py` / `eval_rd.sh` — encode once at n_q=12, decode prefi
 | euc_10ep | **124.1** | 1.27 → **1.48** (real R-D curve, saturates ~8 kbps) | 0.79→0.86 | −13.5→−10.7 | 11.0 |
 | hyp_std_10ep | 153.3 | 1.10 **flat** | 0.71 | ≈ −35 | 11.0 |
 | gradcorr_noriem_10ep | 158.1 | 1.12 **flat** | 0.71 | ≈ −35 | 9.6 |
+| blockptste_riem_gc_10ep (A4, job 23700480) | 274.1 💥 | meaningless (collapsed) | 0.27–0.29 | ≈ −44 | **0.0** |
 
 *The hyperbolic R-D curves are FLAT — extra RVQ depth adds nothing perceptually. Verified NOT an eval artifact (encode/decode path is bit-identical to the training forward, max diff 2e-7). Explanation: in the boundary-shell regime the Möbius sum of boundary codes saturates `log_map0` magnitude, so layers 2–12 barely change the decoder input. Entropy coding would save ~8–20%.*
 
+*A4 at d512 (added 2026-06-12, identical config to gradcorr_noriem_10ep with `--hste` → `--block_hste_pt --hste_riemannian`): **full boundary collapse from epoch 1** — commit pinned at 72.2079, PPL 1.0 on all 12 layers, per-layer code entropy 0.00 bits, best_epoch stuck at 3 on noise-level recon (~262). Together with the §4.6 d128 collapse this brackets A4's envelope: it requires the low-dim tangent-proj bottleneck (d32–d64, where it is the best hyperbolic config and beats matched Euclidean) and fails at high codebook dim, the reverse of gradcorr_noriem's envelope (d64–d512). The d512 table-4.5 comparison for A4 is therefore a negative result, not a like-for-like contender row.*
+
 ### 4.6 codebook_dim sweep with tangent-space bottleneck (3 ep, `--tangent_proj`, valid recon ep3)
 
-New flag `--tangent_proj`: the `codebook_dim` bottleneck is a Euclidean `nn.Linear` **before** `exp_map0` (and after `log_map0` on decode) — quantization lives in the low-dim Poincaré ball, no hyperbolic `HLinear` layers. Jobs 23670380–93, 23671648–52 (hyp_std rerun after a tangent_proj bug fix in the standard-mode exit), 23671849–58, 23675622–29, 23683730.
+New flag `--tangent_proj`: the `codebook_dim` bottleneck is a Euclidean `nn.Linear` **before** `exp_map0` (and after `log_map0` on decode) — quantization lives in the low-dim Poincaré ball, no hyperbolic `HLinear` layers. Jobs 23670380–93, 23671648–52 (hyp_std rerun after a tangent_proj bug fix in the standard-mode exit), 23671849–58, 23675622–29, 23683730; A4 column added 2026-06-12 (jobs 23700389/23700390/23700391 d8/d32/d128 + existing 23693961 d64, identical config).
 
-| dim | euc | hyp_std | gradcorr_noriem | nmhste_noriem (no gc) | nmhste_riem (no gc) | blockhste | gyronly |
-|---|---|---|---|---|---|---|---|
-| 8 | 160.6 | **184.4** | 270.6 💥 | NaN 💥 | 267.4 💥 | 273.2 💥 | 271.7 💥 |
-| 32 | **157.1** | 200.8 | 260.8 💥 | 255.0 ⚠️ | 273.1 💥 | 270.0 💥 | — |
-| 64 | 179.7 | 212.0 | 190.3 ✅ | NaN 💥 | 264.0 💥 | 270.0 💥 | — |
-| 128 | 159.7 | **165.2** | 184.5 ✅ | NaN 💥 | 260.3 💥 | 303.5 💥 | — |
+| dim | euc | hyp_std | gradcorr_noriem | nmhste_noriem (no gc) | nmhste_riem (no gc) | blockhste | gyronly | blockptste_riem_gc (A4) |
+|---|---|---|---|---|---|---|---|---|
+| 8 | 160.6 | **184.4** | 270.6 💥 | NaN 💥 | 267.4 💥 | 273.2 💥 | 271.7 💥 | 265.9 💥 |
+| 32 | **157.1** | 200.8 | 260.8 💥 | 255.0 ⚠️ | 273.1 💥 | 270.0 💥 | — | **179.0 ✅** |
+| 64 | 179.7 | 212.0 | 190.3 ✅ | NaN 💥 | 264.0 💥 | 270.0 💥 | — | **177.7 ✅** |
+| 128 | 159.7 | **165.2** | 184.5 ✅ | NaN 💥 | 260.3 💥 | 303.5 💥 | — | 279.9 💥 |
 
 *💥 = boundary collapse (commit 72.2079, PPL≈1); NaN = codebook explosion within epoch 1; ⚠️ = alive but poor. Euclidean-STE families (euc, hyp_std) train at every dim — hyp_std_d8 reaches near-full utilization (PPL 731–963) by coding directions on the shell. The HSTE usable envelope is narrow: no-riemannian + gradient_correction + dim ≥ 64. The non-riemannian ×λ_x² amplification compounds multiplicatively through the un-detached 12-layer chain (deepest backprop paths dominate when per-hop factors > 1) → NaN; `gradient_correction` detaches the chain and tames it. The riemannian ÷λ_q² discount applies effectively ONCE per path (shallow paths dominate when factors < 1) — no compounding needed, a single ÷100 starves.*
+
+*Uniform-dropout ablation (2026-06-12, jobs 23710471–75): rerunning the A4 column (and the §4.5 d512 10-ep run) WITHOUT `--uniform` (i.e. no per-batch bandwidth sampling — every batch trains the full 12-layer stack) collapses EVERY cell, including the previously-healthy d32/d64 (179.0→267.7, 177.7→263.1; PPL 1.0 on all layers incl. layer 0). The structured quantizer-depth dropout is load-bearing for A4: shallow-prefix batches (n_q=1,2,4) train the encoder through short, un-saturated Möbius chains and keep codebooks engaged before the full-depth radius-accumulation dynamic ([[hyperbolic-collapse-is-dynamic-not-init]]) can take hold. `--uniform` is therefore part of A4's required recipe on audio, alongside radius control.*
+
+*A4 (`--block_hste_pt --hste_riemannian --gradient_correction`, full flags as §4.7 5-arm study) widens the HSTE usable envelope downward: it is the best hyperbolic config at d64 (177.7, beats euc's 179.7 — the only hyperbolic cell ever to beat matched Euclidean) AND the only HSTE variant alive at d32 (179.0, PPL 454–678; gradcorr_noriem collapses there). It collapses at the extremes: d8 (PPL≈1 from epoch 1, best_epoch stuck) and — unlike gradcorr_noriem, which survives d128 — also at d128 (commit pinned at 72.2079 by epoch 2). So A4 and gradcorr_noriem have *complementary* envelopes (d32–64 vs d64–128); the block-level riemannian hop protects the narrow-bottleneck regime but does not rescue d8, where the single ÷λ² discount on the one recon path apparently still starves the encoder.*
 
 ### 4.7 STE-variant matrix — closing the gradient-surrogate question
 

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HRQ-VAE forward pass (with HSTE)</title>
+<style>
+  body { margin: 0; background: #fff; }
+  /* Edit the SVG below to tweak the schematic, then re-render to PNG with:
+       rsvg-convert -z 2 scheme_new.svg -o scheme_new.png
+     (the SVG block is also saved standalone as scheme_new.svg)
+     NOTE: the styling that matters lives in the <style> *inside* the <svg>,
+     so the standalone SVG renders identically. */
+</style>
+</head>
+<body>
+<svg id="scheme" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" width="880" height="440">
+  <style>
+    text   { fill: #000; font-family: "Times New Roman", "Nimbus Roman", "DejaVu Serif", serif; }
+    .lbl   { font-size: 17px; }
+    .math  { font-size: 17px; font-style: italic; }
+    .small { font-size: 13px; }
+    .title { font-size: 18px; }
+    .node  { fill: #fff; stroke: #000; stroke-width: 1.4; }
+    .box   { fill: #fff; stroke: #000; stroke-width: 1.4; }
+    .frame { fill: none; stroke: #000; stroke-width: 1.4; }
+    .edge  { fill: none; stroke: #000; stroke-width: 1.4; }
+    .bold  { fill: none; stroke: #000; stroke-width: 2.4; }
+    .dot   { fill: none; stroke: #000; stroke-width: 1.4; stroke-dasharray: 2 5; }
+  </style>
+
+  <rect x="0" y="0" width="880" height="440" fill="#fff"/>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#000"/>
+    </marker>
+    <marker id="arrowb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#000"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="440" y="30" text-anchor="middle">Forward pass of GHRQ-VAE</text>
+
+  <!-- ===== main left-to-right path ===== -->
+  <!-- Encoder + exp map  ->  z_e -->
+  <text class="lbl" x="92" y="166" text-anchor="middle">Encoder + exp<tspan class="small" dy="4">0</tspan></text>
+  <line class="edge" x1="30" y1="180" x2="151" y2="180" marker-end="url(#arrow)"/>
+  <circle class="node" cx="175" cy="180" r="20"/>
+  <text class="math" x="175" y="185" text-anchor="middle">z<tspan class="small" dy="3">e</tspan></text>
+
+  <!-- z_e -> RQM (r_0) -->
+  <path class="edge" d="M175,200 L175,275 L289,275" marker-end="url(#arrow)"/>
+
+  <!-- ===== RQM block ===== -->
+  <rect class="frame" x="255" y="58" width="330" height="252"/>
+  <text class="lbl" x="572" y="300" text-anchor="end">RQM</text>
+
+  <!-- residual nodes (left column, x=305) and code nodes (right column, x=455) -->
+  <!-- bottom row -->
+  <circle class="node" cx="305" cy="275" r="17"/>
+  <text class="math" x="305" y="280" text-anchor="middle">r<tspan class="small" dy="3">0</tspan></text>
+  <circle class="node" cx="455" cy="275" r="17"/>
+  <text class="math" x="455" y="280" text-anchor="middle">q<tspan class="small" dy="3">1</tspan></text>
+  <!-- middle row -->
+  <circle class="node" cx="305" cy="190" r="17"/>
+  <text class="math" x="305" y="195" text-anchor="middle">r<tspan class="small" dy="3">1</tspan></text>
+  <circle class="node" cx="455" cy="190" r="17"/>
+  <text class="math" x="455" y="195" text-anchor="middle">q<tspan class="small" dy="3">2</tspan></text>
+  <!-- top row -->
+  <circle class="node" cx="305" cy="90" r="17"/>
+  <text class="math" x="305" y="95" text-anchor="middle">r<tspan class="small" dy="3">n-1</tspan></text>
+  <circle class="node" cx="455" cy="90" r="17"/>
+  <text class="math" x="455" y="95" text-anchor="middle">q<tspan class="small" dy="3">n</tspan></text>
+
+  <!-- residual / quantize chain -->
+  <line class="edge" x1="322" y1="275" x2="436" y2="275" marker-end="url(#arrow)"/>            <!-- r0 -> q1 -->
+  <line class="edge" x1="305" y1="258" x2="305" y2="209" marker-end="url(#arrow)"/>            <!-- r0 -> r1 -->
+  <line class="edge" x1="439" y1="262" x2="320" y2="201" marker-end="url(#arrow)"/>            <!-- q1 -> r1 -->
+  <line class="edge" x1="322" y1="190" x2="436" y2="190" marker-end="url(#arrow)"/>            <!-- r1 -> q2 -->
+  <line class="edge" x1="322" y1="90"  x2="436" y2="90"  marker-end="url(#arrow)"/>            <!-- r(n-1) -> qn -->
+  <line class="dot"  x1="305" y1="171" x2="305" y2="109"/>                                       <!-- r1 ... r(n-1) -->
+  <line class="edge" x1="439" y1="185" x2="315" y2="144" marker-end="url(#arrow)"/>            <!-- q2 -> midpoint between r1 and r(n-1) -->
+  <line class="edge" x1="449" y1="136" x2="321" y2="95"  marker-end="url(#arrow)"/>            <!-- midpoint between q2 and qn -> r(n-1) -->
+  <line class="dot"  x1="455" y1="171" x2="455" y2="109"/>                                       <!-- q2 ... qn -->
+
+  <!-- aggregation: q1, q2, qn merge at a junction and a single arrow points at z_hat -->
+  <line class="bold" x1="468" y1="264" x2="560" y2="180"/>                                       <!-- q1 -> junction -->
+  <line class="bold" x1="472" y1="188" x2="560" y2="180"/>                                       <!-- q2 -> junction -->
+  <line class="bold" x1="468" y1="101" x2="560" y2="180"/>                                       <!-- qn -> junction -->
+  <line class="bold" x1="560" y1="180" x2="618" y2="180" marker-end="url(#arrowb)"/>            <!-- junction -> z_hat -->
+  <circle class="node" cx="640" cy="180" r="20"/>
+  <text class="math" x="640" y="187" text-anchor="middle">z</text>
+  <text class="math" x="640" y="176" text-anchor="middle" font-style="normal">&#710;</text>
+
+  <!-- z_hat -> log map + decoder -->
+  <text class="lbl" x="748" y="166" text-anchor="middle">log<tspan class="small" dy="4">0</tspan> + Decoder</text>
+  <line class="edge" x1="660" y1="180" x2="835" y2="180" marker-end="url(#arrow)"/>
+
+  <!-- ===== HSTE block ===== -->
+  <rect class="box" x="590" y="365" width="100" height="42"/>
+  <text class="lbl" x="640" y="391" text-anchor="middle">HSTE</text>
+
+  <!-- z_e -> HSTE (skip / gradient path) -->
+  <path class="edge" d="M175,200 L175,386 L588,386" marker-end="url(#arrow)"/>
+  <!-- z_hat -> HSTE -->
+  <line class="edge" x1="640" y1="201" x2="640" y2="363" marker-end="url(#arrow)"/>
+  <!-- HSTE -> (decoder path), merges into the log+decoder line -->
+  <path class="edge" d="M690,386 L730,386 L730,180"/>
+</svg>
+</body>
+</html>

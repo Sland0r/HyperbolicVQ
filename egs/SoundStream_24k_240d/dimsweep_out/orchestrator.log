@@ -1,0 +1,119 @@
+=== orchestrator start Thu Jun 18 11:39:39 PM CEST 2026 ===
+23:39 training jobs still in queue: 8
+23:41 training jobs still in queue: 8
+23:43 training jobs still in queue: 8
+23:45 training jobs still in queue: 8
+23:47 training jobs still in queue: 8
+23:49 training jobs still in queue: 8
+23:51 training jobs still in queue: 8
+23:53 training jobs still in queue: 8
+23:55 training jobs still in queue: 8
+23:57 training jobs still in queue: 8
+23:59 training jobs still in queue: 8
+00:01 training jobs still in queue: 8
+00:03 training jobs still in queue: 8
+00:05 training jobs still in queue: 8
+00:07 training jobs still in queue: 8
+00:09 training jobs still in queue: 8
+00:11 training jobs still in queue: 8
+00:13 training jobs still in queue: 8
+00:15 training jobs still in queue: 8
+00:17 training jobs still in queue: 8
+00:19 training jobs still in queue: 8
+00:21 training jobs still in queue: 8
+00:23 training jobs still in queue: 8
+00:25 training jobs still in queue: 8
+00:27 training jobs still in queue: 8
+00:29 training jobs still in queue: 8
+00:31 training jobs still in queue: 8
+00:33 training jobs still in queue: 8
+00:35 training jobs still in queue: 8
+00:37 training jobs still in queue: 8
+00:39 training jobs still in queue: 8
+00:41 training jobs still in queue: 8
+00:43 training jobs still in queue: 8
+00:45 training jobs still in queue: 8
+00:47 training jobs still in queue: 8
+00:49 training jobs still in queue: 8
+00:51 training jobs still in queue: 8
+00:53 training jobs still in queue: 8
+00:55 training jobs still in queue: 8
+00:57 training jobs still in queue: 8
+00:59 training jobs still in queue: 8
+01:01 training jobs still in queue: 8
+01:03 training jobs still in queue: 8
+01:05 training jobs still in queue: 8
+01:07 training jobs still in queue: 8
+01:09 training jobs still in queue: 8
+01:11 training jobs still in queue: 8
+01:13 training jobs still in queue: 7
+01:15 training jobs still in queue: 7
+01:17 training jobs still in queue: 7
+01:19 training jobs still in queue: 3
+01:21 training jobs still in queue: 0
+all training jobs left the queue Fri Jun 19 01:21:44 AM CEST 2026
+sbatch: Single-node jobs run on a shared node by default. Add --exclusive if you want to use a node exclusively.
+sbatch: A full node consists of 64 CPU cores, 737280 MiB of memory and 4 GPUs and can be shared by up to 4 jobs.
+sbatch: By default shared jobs get 11520 MiB of memory per CPU core, unless explicitly overridden with --mem-per-cpu, --mem-per-gpu or --mem.
+sbatch: You will be charged for 1 GPUs, based on the number of CPUs, GPUs and the amount memory that you've requested.
+submitted eval job: 24013535
+01:22 eval job still in queue: 1
+01:23 eval job still in queue: 1
+01:24 eval job still in queue: 1
+01:25 eval job still in queue: 1
+01:26 eval job still in queue: 1
+01:27 eval job still in queue: 1
+01:28 eval job still in queue: 1
+01:29 eval job still in queue: 1
+01:30 eval job still in queue: 1
+01:31 eval job still in queue: 1
+01:32 eval job still in queue: 1
+01:33 eval job still in queue: 1
+01:34 eval job still in queue: 1
+01:35 eval job still in queue: 1
+01:36 eval job still in queue: 1
+01:37 eval job still in queue: 1
+01:38 eval job still in queue: 1
+01:39 eval job still in queue: 1
+01:40 eval job still in queue: 0
+eval job finished Fri Jun 19 01:40:15 AM CEST 2026
+===== RECON TABLE =====
+\begin{tabular}{lccc}
+\hline
+dim & Euclidean & GHRQ-VAE (ours) & GHRQ-VAE (no gc) \\
+\hline
+$8$ & 119.9 & 127.3 & 135.3 \\
+$32$ & 150.4 & 123.4 & 125.8 \\
+$64$ & 117.6 & 146.5 & 147.2 \\
+$128$ & 118.1 & 134.2 & 137.6 \\
+$512$ & 124.1 & 161.3 & 160.3 \\
+\hline
+\end{tabular}
+
+===== PERCEPTUAL TABLE =====
+\begin{tabular}{llccccc}
+\hline
+Config & dim & PESQ$\uparrow$ & STOI$\uparrow$ & SI-SDR$\uparrow$ & mel-L1$\downarrow$ & kbps(H)$\downarrow$ \\
+\hline
+Euclidean & $8$ & 1.506 & 0.872 & -11.30 & 1.1261 & 11.68 \\
+Euclidean & $32$ & -- & -- & -- & -- & -- \\
+Euclidean & $64$ & 1.685 & 0.890 & -6.05 & 1.0888 & 11.81 \\
+Euclidean & $128$ & 1.654 & 0.893 & -6.36 & 1.0897 & 11.58 \\
+Euclidean & $512$ & 1.480 & 0.858 & -10.71 & 1.1630 & 11.03 \\
+\hline
+GHRQ-VAE (ours) & $8$ & 1.391 & 0.848 & -14.62 & 1.2101 & 8.28 \\
+GHRQ-VAE (ours) & $32$ & 1.448 & 0.854 & -13.18 & 1.1623 & 9.42 \\
+GHRQ-VAE (ours) & $64$ & 1.115 & 0.752 & -33.54 & 1.4055 & 7.55 \\
+GHRQ-VAE (ours) & $128$ & 1.269 & 0.814 & -19.63 & 1.2650 & 6.61 \\
+GHRQ-VAE (ours) & $512$ & 1.109 & 0.706 & -35.69 & 1.6026 & 5.58 \\
+\hline
+GHRQ-VAE (no gc) & $8$ & 1.156 & 0.779 & -30.17 & 1.2797 & 8.21 \\
+GHRQ-VAE (no gc) & $32$ & 1.424 & 0.860 & -14.37 & 1.1538 & 9.27 \\
+GHRQ-VAE (no gc) & $64$ & 1.105 & 0.704 & -38.05 & 1.5810 & 7.44 \\
+GHRQ-VAE (no gc) & $128$ & 1.186 & 0.795 & -31.86 & 1.3284 & 6.78 \\
+GHRQ-VAE (no gc) & $512$ & 1.111 & 0.685 & -39.41 & 1.6794 & 6.21 \\
+\hline
+\end{tabular}
+
+wrote /home/acolombo/VAEs/egs/SoundStream_24k_240d/dimsweep_out/rd_curves.png and .pdf
+=== orchestrator DONE Fri Jun 19 01:40:19 AM CEST 2026 ===

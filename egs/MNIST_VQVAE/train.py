@@ -109,8 +109,70 @@ def get_args():
              'Riemannian->Euclidean re-conversion that explodes near the ball '
              'boundary). Requires --hste.')
     parser.add_argument(
+        '--hste_clip', action='store_true',
+        help='Clip the gradient inside HyperbolicSTE.backward: keep the full '
+             'standard STE (PT + lambda_x^2 re-conversion) but cap the '
+             'per-vector outgoing gradient norm at the incoming norm, so the '
+             'net conformal amplification through the module is <= 1. '
+             'Alternative to --hste_riemannian.')
+    parser.add_argument(
         '--gradient_correction', action='store_true',
         help='Detach the residual after each quantization step (gradient correction)')
+    parser.add_argument(
+        '--block_hste_pt', action='store_true',
+        help='Block-level PT-STE: detach per-layer codes and apply ONE '
+             'HyperbolicSTE transport on the ball from the full Mobius sum Q '
+             'back to the initial residual r0 (combine with --hste_riemannian '
+             'and --gradient_correction).')
+    parser.add_argument(
+        '--gyration_only', action='store_true',
+        help='Hop backward mode: rotate the Euclidean gradient from q to x by '
+             'the geometry (gyration) with NO conformal/lambda coefficients at '
+             'all (magnitude preserved like the Euclidean STE, direction '
+             'hyperbolically corrected). Alternative to --hste_riemannian on the '
+             'block hop (--block_hste_pt).')
+    parser.add_argument(
+        '--A5', action='store_true',
+        help='Commitment loss only at the first and last RQ steps; the last '
+             'one is computed on a never-detached residual chain so its '
+             'gradient reaches the encoder through all Mobius updates even '
+             'under --gradient_correction (combine with the A4 config: '
+             '--new_method --block_hste_pt --hste_riemannian '
+             '--gradient_correction).')
+    parser.add_argument(
+        '--A4_v2', action='store_true',
+        help='Strict gradient correction: also detach the FIRST residual so NO '
+             'per-layer commitment loss reaches the encoder (vanilla gc still '
+             'leaks layer 0 through r0). Requires the A4 config (--block_hste_pt '
+             '--gradient_correction). With --A5, leaves only the last-layer '
+             'commit chain.')
+    parser.add_argument(
+        '--a6', action='store_true',
+        help='Keep-first recon routing: only layer 0 carries the reconstruction '
+             'gradient to the encoder (eq:stack i=1 term). Pure recon router, '
+             'leaves all commit losses intact (unlike gc). c>0 + per-layer STE; '
+             'inert under a block STE. Mutually exclusive with --a7.')
+    parser.add_argument(
+        '--a7', action='store_true',
+        help='Keep-last recon routing: only the last layer carries the recon '
+             'gradient (eq:stack i=N term, full transport chain). Per-layer '
+             'realization of the A4 block hop; run with gc OFF. Mutually '
+             'exclusive with --a6.')
+    parser.add_argument(
+        '--a6.1', dest='a6_1', action='store_true',
+        help='SUM routing: encoder recon grad = A4 block-hop grad + a6 '
+             '(keep-first) per-layer grad, added. Requires --hste; keeps '
+             'per-layer codes attached. Mutually exclusive with a6/a7/a7.1.')
+    parser.add_argument(
+        '--a7.1', dest='a7_1', action='store_true',
+        help='SUM routing: encoder recon grad = A4 block-hop grad + a7 '
+             '(keep-last) per-layer grad, added. Requires --hste. Mutually '
+             'exclusive with a6/a7/a6.1.')
+    parser.add_argument(
+        '--a8', action='store_true',
+        help='FULL-SUM routing: A4 block-hop grad + ALL per-layer recon grad '
+             '(un-truncated sibling of a6.1/a7.1). Requires --new_method; keeps '
+             'per-layer codes attached. Mutually exclusive with a6/a7/a6.1/a7.1.')
     parser.add_argument(
         '--full_grid', action='store_true',
         help='Quantize the conv feature map at its true spatial resolution '
@@ -263,7 +325,17 @@ def main():
         approx=args.approx,
         hste=args.hste,
         hste_riemannian=args.hste_riemannian,
+        hste_clip=args.hste_clip,
         gradient_correction=args.gradient_correction,
+        block_hste_pt=args.block_hste_pt,
+        gyration_only=args.gyration_only,
+        A5=args.A5,
+        A4_v2=args.A4_v2,
+        a6=args.a6,
+        a7=args.a7,
+        a6_1=args.a6_1,
+        a7_1=args.a7_1,
+        a8=args.a8,
         full_grid=args.full_grid,
     ).to(device)
     logger.log_info(model)

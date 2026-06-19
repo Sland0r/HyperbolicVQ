@@ -1,0 +1,107 @@
+=== euc_d32 follow-up start Fri Jun 19 01:41:39 AM CEST 2026, waiting on job 24013753 ===
+01:41 euc_d32 job 24013753 still running
+01:43 euc_d32 job 24013753 still running
+01:45 euc_d32 job 24013753 still running
+01:47 euc_d32 job 24013753 still running
+01:49 euc_d32 job 24013753 still running
+01:51 euc_d32 job 24013753 still running
+01:53 euc_d32 job 24013753 still running
+01:55 euc_d32 job 24013753 still running
+01:57 euc_d32 job 24013753 still running
+01:59 euc_d32 job 24013753 still running
+02:01 euc_d32 job 24013753 still running
+02:03 euc_d32 job 24013753 still running
+02:05 euc_d32 job 24013753 still running
+02:07 euc_d32 job 24013753 still running
+02:09 euc_d32 job 24013753 still running
+02:11 euc_d32 job 24013753 still running
+02:13 euc_d32 job 24013753 still running
+02:15 euc_d32 job 24013753 still running
+02:17 euc_d32 job 24013753 still running
+02:19 euc_d32 job 24013753 still running
+02:21 euc_d32 job 24013753 still running
+02:23 euc_d32 job 24013753 still running
+02:25 euc_d32 job 24013753 still running
+02:27 euc_d32 job 24013753 still running
+02:29 euc_d32 job 24013753 still running
+02:31 euc_d32 job 24013753 still running
+02:33 euc_d32 job 24013753 still running
+02:35 euc_d32 job 24013753 still running
+02:37 euc_d32 job 24013753 still running
+02:39 euc_d32 job 24013753 still running
+02:41 euc_d32 job 24013753 still running
+02:43 euc_d32 job 24013753 still running
+02:45 euc_d32 job 24013753 still running
+02:47 euc_d32 job 24013753 still running
+02:49 euc_d32 job 24013753 still running
+02:51 euc_d32 job 24013753 still running
+02:53 euc_d32 job 24013753 still running
+02:55 euc_d32 job 24013753 still running
+02:57 euc_d32 job 24013753 still running
+02:59 euc_d32 job 24013753 still running
+03:01 euc_d32 job 24013753 still running
+03:03 euc_d32 job 24013753 still running
+03:05 euc_d32 job 24013753 still running
+03:07 euc_d32 job 24013753 still running
+03:09 euc_d32 job 24013753 still running
+03:11 euc_d32 job 24013753 still running
+03:13 euc_d32 job 24013753 still running
+03:15 euc_d32 job 24013753 still running
+03:17 euc_d32 job 24013753 still running
+03:19 euc_d32 job 24013753 still running
+euc_d32 training done Fri Jun 19 03:21:41 AM CEST 2026
+euc_d32 ckpt: 
+/home/acolombo/.conda/envs/vaes/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+Traceback (most recent call last):
+  File "/home/acolombo/VAEs/egs/SoundStream_24k_240d/eval_rd.py", line 186, in <module>
+    main()
+  File "/home/acolombo/VAEs/egs/SoundStream_24k_240d/eval_rd.py", line 81, in main
+    ck = torch.load(args.ckpt, map_location='cpu', weights_only=False)
+  File "/home/acolombo/.conda/envs/vaes/lib/python3.10/site-packages/torch/serialization.py", line 1500, in load
+    with _open_file_like(f, "rb") as opened_file:
+  File "/home/acolombo/.conda/envs/vaes/lib/python3.10/site-packages/torch/serialization.py", line 768, in _open_file_like
+    return _open_file(name_or_buffer, mode)
+  File "/home/acolombo/.conda/envs/vaes/lib/python3.10/site-packages/torch/serialization.py", line 749, in __init__
+    super().__init__(open(name, mode))  # noqa: SIM115
+FileNotFoundError: [Errno 2] No such file or directory: ''
+===== RECON TABLE =====
+\begin{tabular}{lccc}
+\hline
+dim & Euclidean & GHRQ-VAE (ours) & GHRQ-VAE (no gc) \\
+\hline
+$8$ & 119.9 & 127.3 & 135.3 \\
+$32$ & 116.4 & 123.4 & 125.8 \\
+$64$ & 117.6 & 146.5 & 147.2 \\
+$128$ & 118.1 & 134.2 & 137.6 \\
+$512$ & 124.1 & 161.3 & 160.3 \\
+\hline
+\end{tabular}
+
+===== PERCEPTUAL TABLE =====
+\begin{tabular}{llccccc}
+\hline
+Config & dim & PESQ$\uparrow$ & STOI$\uparrow$ & SI-SDR$\uparrow$ & mel-L1$\downarrow$ & kbps(H)$\downarrow$ \\
+\hline
+Euclidean & $8$ & 1.506 & 0.872 & -11.30 & 1.1261 & 11.68 \\
+Euclidean & $32$ & -- & -- & -- & -- & -- \\
+Euclidean & $64$ & 1.685 & 0.890 & -6.05 & 1.0888 & 11.81 \\
+Euclidean & $128$ & 1.654 & 0.893 & -6.36 & 1.0897 & 11.58 \\
+Euclidean & $512$ & 1.480 & 0.858 & -10.71 & 1.1630 & 11.03 \\
+\hline
+GHRQ-VAE (ours) & $8$ & 1.391 & 0.848 & -14.62 & 1.2101 & 8.28 \\
+GHRQ-VAE (ours) & $32$ & 1.448 & 0.854 & -13.18 & 1.1623 & 9.42 \\
+GHRQ-VAE (ours) & $64$ & 1.115 & 0.752 & -33.54 & 1.4055 & 7.55 \\
+GHRQ-VAE (ours) & $128$ & 1.269 & 0.814 & -19.63 & 1.2650 & 6.61 \\
+GHRQ-VAE (ours) & $512$ & 1.109 & 0.706 & -35.69 & 1.6026 & 5.58 \\
+\hline
+GHRQ-VAE (no gc) & $8$ & 1.156 & 0.779 & -30.17 & 1.2797 & 8.21 \\
+GHRQ-VAE (no gc) & $32$ & 1.424 & 0.860 & -14.37 & 1.1538 & 9.27 \\
+GHRQ-VAE (no gc) & $64$ & 1.105 & 0.704 & -38.05 & 1.5810 & 7.44 \\
+GHRQ-VAE (no gc) & $128$ & 1.186 & 0.795 & -31.86 & 1.3284 & 6.78 \\
+GHRQ-VAE (no gc) & $512$ & 1.111 & 0.685 & -39.41 & 1.6794 & 6.21 \\
+\hline
+\end{tabular}
+
+wrote /home/acolombo/VAEs/egs/SoundStream_24k_240d/dimsweep_out/rd_curves.png and .pdf
+=== euc_d32 follow-up DONE Fri Jun 19 03:21:58 AM CEST 2026 ===

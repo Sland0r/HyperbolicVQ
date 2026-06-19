@@ -1,11 +1,27 @@
+% \documentclass[12pt]{report}
+
+% \usepackage{graphicx, color}
+% \usepackage[utf8]{inputenc}
+% \usepackage[english]{babel}
+% \usepackage[a4paper,margin=2cm]{geometry}
+% \usepackage{amsmath}
+
 \documentclass[12pt]{report}
 
 \usepackage{graphicx, color}
-\usepackage{amsmath, amssymb}
-\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage[a4paper,margin=2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage[colorlinks=true,
+            linkcolor=blue,    
+            citecolor=blue,    
+            urlcolor=blue,     
+            linktoc=all]{hyperref}
+\usepackage{cleveref} 
 
 
 
@@ -52,7 +68,7 @@
 
 \HRule \\[0.4cm]
 
-{ \huge \bfseries General Purpose Geometrically Aware Hyperbolic Residual-Quantized Variational AutoEncoders}\\[0.4cm] % Title of your document
+{ \huge \bfseries Geometrically-Aware Hyperbolic Residual-Quantized Variational AutoEncoders}\\[0.4cm] % Title of your document
 
 \HRule \\[0.5cm]
 
@@ -167,101 +183,84 @@ Melika Ayoughi% Supervisor's Name
 
 \chapter{Introduction} 
 In recent years, representation learning has increasingly shifted toward the discretization of diverse data modalities into token sequences, which underlies the scalability of modern multimodal models. By converting continuous, high-dimensional signals (such as images, audio, and video) into sequences of discrete tokens, this approach enables the effective application of powerful generative architectures, including autoregressive transformers and diffusion models.
-A prominent framework for discretizing continuous data is provided by autoencoders based on Vector Quantization \cite{originalvq, vqvae, finitescalarquantizationfsq, gumbelvq, vqnew}, along with their hierarchical extension, Residual Quantized VAEs (RQ-VAEs) \cite{soundstream}. In particular, RQ-VAEs support the coarse-to-fine decomposition of data by constructing hierarchical representations through successive stages of quantization, thereby capturing structures at multiple levels of granularity.
+A prominent framework for discretizing continuous data is provided by autoencoders based on Vector Quantization \cite{originalvq, vqvae, finitescalarquantizationfsq, gumbelvq, vqnew}, along with their hierarchical extension, Residual Quantized VAEs (Residual Quantized Variational Autoencoders) \cite{soundstream}. In particular, Residual Quantized Variational Autoencoders support the coarse-to-fine decomposition of data by constructing hierarchical representations through successive stages of quantization, thereby capturing structures at multiple levels of granularity.
 
 Despite their empirical success, conventional quantization methods have fundamental structural limitations. These methods are also prone to well-known optimization issues, including codebook collapse, vanishing residual contributions, codebook collisions, and scaling instabilities \cite{collapse_1}.
-Another fundamental geometric limitation of these approaches is their reliance on Euclidean latent spaces. Euclidean geometry is intrinsically flat, with volume growing only polynomially as a function of the radius, making it poorly suited for representing hierarchical data. This mismatch becomes particularly pronounced in the context of RQ-VAEs, which naturally induce tree-like structures: early quantization stages capture coarse information, while subsequent stages progressively refine it. Such hierarchical organizations are more faithfully represented in hyperbolic space, where constant negative curvature induces exponential volume growth. This geometric property closely mirrors the expansion behavior of trees, providing a more appropriate inductive bias for hierarchical representation learning.
+Another fundamental geometric limitation of these approaches is their reliance on Euclidean latent spaces. Euclidean geometry is intrinsically flat, with volume growing only polynomially as a function of the radius, making it poorly suited for representing hierarchical data. This mismatch becomes particularly pronounced in the context of Residual Quantized Variational Autoencoders, which naturally induce tree-like structures: early quantization stages capture coarse information, while subsequent stages progressively refine it. Such hierarchical organizations are more faithfully represented in hyperbolic space, where constant negative curvature induces exponential volume growth. This geometric property closely mirrors the expansion behavior of trees, providing a more appropriate inductive bias for hierarchical representation learning.
 
 The exponential growth of volume induced by this metric makes hyperbolic space a natural embedding space for the hierarchical representations produced by residual quantization.
 
-Although recent work has explored hyperbolic extensions of VQ-VAEs, a critical methodological gap remains. Existing approaches often directly transplant Euclidean training procedures—such as standard K-means clustering or exponential moving average (EMA) updates—into hyperbolic manifolds. However, such techniques fail to account for the intrinsic geometry of these spaces, including the role of Fr'echet means and the non-Euclidean distance structure defined in models such as the Poincar'e ball and Lorentz manifold. As a result, these methods operate in hyperbolic spaces while retaining fundamentally Euclidean optimization principles.
+Although recent work has explored hyperbolic extensions of Vector-Quantized Variational Autoencoders, a critical methodological gap remains. Existing approaches often directly transplant Euclidean training procedures—such as standard K-means clustering or exponential moving average (Exponential Moving Average) updates—into hyperbolic manifolds. However, such techniques fail to account for the intrinsic geometry of these spaces, including the role of Fr'echet means and the non-Euclidean distance structure defined in models such as the Poincar'e ball and Lorentz manifold. As a result, these methods operate in hyperbolic spaces while retaining fundamentally Euclidean optimization principles.
 
 
 In this study, we introduce a novel framework for \emph{Hyperbolic Residual Quantization}, in which the quantization process is treated as a first-class operation on a hyperbolic manifold. Instead of relying on naive geometric projections, we designed training objectives that explicitly leveraged the curvature of the space during codebook updates.
 
-To show that our changes are generalizable, we evaluated the proposed approach across two domains: image synthesis (for visualizations) and audio modeling (because the results of applying hyperbolic learning to audio are promising). To the best of our knowledge, this is the first application of hyperbolic RQ-VAEs to audio data, where hierarchical structures such as harmonic and temporal patterns are particularly prominent. Furthermore, we provide a detailed analysis of the learned latent representations at inference time, demonstrating that hyperbolic quantization yields improved codebook utilization and a more interpretable hierarchical organization than Euclidean baselines.
+Prior hyperbolic residual quantizers place the codes inside the ball and assign them by geodesic distance, but keep the Euclidean training machinery. This naive lift leaves the two main operations of residual quantization geometrically wrong at once: first, the residual recursion itself, which on the ball no longer telescopes, drifts away from the true reconstruction error; second, the estimated gradient from the quantizer is the wrong vector and accumulates across stages, exploding with depth. These two failures become decisive as the depth grows, motivating the two components of our Geometry-aware Hyperbolic Residual Quantization module: the Hyperbolic Residual Aggregation method that repairs the cascade, and a block-level discounted hyperbolic straight-through estimator that repairs the gradient.
+
+To show that our changes are generalizable, we evaluated the proposed approach across two domains: image synthesis (for visualizations) and audio modeling (because the results of applying hyperbolic learning to audio are promising). To the best of our knowledge, this is the first application of hyperbolic Residual Quantized Variational Autoencoders to audio data, where hierarchical structures such as harmonic and temporal patterns are particularly prominent. Furthermore, we provide a detailed analysis of the learned latent representations at inference time, demonstrating that hyperbolic quantization yields improved codebook utilization and a more interpretable hierarchical organization than Euclidean baselines.
 
 \chapter{Related Work}
 
-This chapter reviews the literature relevant to our work, placing our contributions in a broader context by first discussing discrete representation learning through vector quantization (\S\ref{sec:vq}), then examining its hierarchical extension through residual quantization (\S\ref{sec:rvq}), and finally reviewing the application of hyperbolic geometry to representation learning (\S\ref{sec:hyperbolic_repr})—culminating in the recent line of work that ports vector and residual quantization onto hyperbolic manifolds, which our hyperbolic RQ-VAE directly builds upon.
+This chapter reviews the literature relevant to our work, placing our contributions in a broader context by first discussing discrete representation learning through vector quantization (\S\ref{sec:vq}), then examining its hierarchical version through residual quantization (\S\ref{sec:rvq}), and finally reviewing its recent extension to hyperbolic geometry.(\S\ref{sec:hyperbolic_repr}).
 
 \section{Vector Quantization}
 \label{sec:vq}
+add why deep learning is good for quantization and vice versa. more specific title.
+Vector quantization (VQ) has a long history in signal processing as a method for lossy data compression \cite{originalvq}. The modern revival of VQ in deep learning was catalyzed by the Vector-Quantized Variational Autoencoders \cite{vqvae}, which introduced a discrete bottleneck into the variational autoencoder framework. By mapping continuous encoder outputs to the nearest vector in a learnable codebook, Vector-Quantized Variational Autoencoders enabled the learning of compact discrete representations suitable for downstream generative modeling. Since the nearest-neighbor assignment is non-differentiable, gradient flow through the quantization step is enabled by the Straight-Through Estimator (Straight-Through Estimator) \cite{straight_through_estimator}, which copies gradients from the decoder input directly to the encoder output, effectively treating the quantization as the identity function during backpropagation.
 
-Vector quantization (VQ) has a long history in signal processing as a method for lossy data compression \cite{originalvq}. The modern revival of VQ in deep learning was catalyzed by the VQ-VAE \cite{vqvae}, which introduced a discrete bottleneck into the variational autoencoder framework. By mapping continuous encoder outputs to the nearest vector in a learnable codebook, VQ-VAE enabled the learning of compact discrete representations suitable for downstream generative modeling. Since the nearest-neighbor assignment is non-differentiable, gradient flow through the quantization step is enabled by the Straight-Through Estimator (STE) \cite{straight_through_estimator}, which copies gradients from the decoder input directly to the encoder output, effectively treating the quantization as the identity function during backpropagation.
+A practical obstacle in training such models is codebook collapse \cite{collapse_1, collapse_2}, where only a small fraction of codewords are ever selected while the rest receive no gradient signal and remain unused, sharply limiting the effective capacity of the discrete bottleneck. To mitigate this well-known issue, various remedies have been proposed, ranging from heuristic codebook resets and exponential moving average (Exponential Moving Average) updates to principled variational relaxations (e.g., HQ-VAE \cite{hqvae}) and alternative discrete bottlenecks like Gumbel-Softmax \cite{gumbelvq} and Finite Scalar Quantization \cite{finitescalarquantizationfsq}.
 
-A practical obstacle in training such models is codebook collapse, where only a small fraction of codewords are ever selected while the rest receive no gradient signal and remain unused, sharply limiting the effective capacity of the discrete bottleneck. To mitigate this well-known issue \cite{collapse_1, collapse_2}, various remedies have been proposed, ranging from heuristic codebook resets and exponential moving average (EMA) updates to principled variational relaxations (e.g., HQ-VAE \cite{hqvae}) and alternative discrete bottlenecks like Gumbel-Softmax \cite{gumbelvq} and Finite Scalar Quantization \cite{finitescalarquantizationfsq}.
-
-While single-stage VQ enables high-fidelity synthesis and generation, achieving high representational capacity requires exponentially large codebooks, which are difficult to optimize. Alternatively, increasing the spatial sequence length of discrete tokens creates a computational bottleneck for downstream autoregressive transformers, which scale quadratically with sequence length. These limitations motivate the multi-stage residual approach discussed next.
+While single-stage VQ enables high-fidelity synthesis and generation, achieving high representational capacity requires exponentially large codebooks, which are difficult to optimize \cite{soundstream}. Alternatively, increasing the spatial sequence length of discrete tokens creates a computational bottleneck for downstream autoregressive transformers, which scale quadratically with sequence length. These limitations motivate the multi-stage residual approach discussed next.
 
 \section{Residual Vector Quantization}
 \label{sec:rvq}
 
-Residual Vector Quantization (RVQ) extends the single-stage VQ paradigm by quantizing the representation in multiple successive stages \cite{soundstream}. At each stage $d$, the residual error from the previous stage is quantized using a dedicated codebook, and the new residual is computed by subtracting the selected codeword. The final representation is the sum of all selected codewords across the $D$ stages. This coarse-to-fine decomposition effectively constructs a virtual codebook with exponential representational capacity ($K^D$ for $D$ codebooks of size $K$) without expanding the physical memory footprint or the spatial sequence length of the discrete tokens. A single input datum is thus represented not by a single discrete token, but by an ordered tuple of $D$ indices, where early entries capture global, macro-level information and later entries encode progressively finer details.
+Residual Vector Quantization (Residual Vector Quantization) extends the single-stage VQ paradigm by quantizing the representation in multiple successive stages \cite{soundstream}. At each stage $d$, the residual error from the previous stage is quantized using a dedicated codebook, and the new residual is computed by subtracting the selected codeword. The final representation is the sum of all selected codewords across the $D$ stages. This decomposition effectively constructs a virtual codebook with exponential representational capacity ($K^D$ for $D$ codebooks of size $K$) without expanding the physical memory footprint or the spatial sequence length of the discrete tokens. A single input data is thus represented not by a single discrete token, but by an ordered tuple of $D$ indices, where early entries capture global, macro-level information and later entries encode progressively finer details \cite{lee2022rqvae}.
 
-RQ-VAE has been successfully applied across a wide range of domains. In image generation, RVQ reduces the sequence length for autoregressive modeling while maintaining high fidelity \cite{lee2022rqvae}, and has been further extended to discrete diffusion models \cite{resgen}, progressive generative image compression \cite{progic}, and unified visual understanding and generation frameworks \cite{evotok}. In the audio domain, foundational RVQ-based codecs like SoundStream \cite{soundstream} and EnCodec \cite{encodec} provide variable-bitrate compression and serve as the standard discrete tokenizers for large-scale language-model-based audio and music generation systems \cite{audiolm, musicgen}. This foundational role in audio has since expanded into diverse applications such as low-latency speech synthesis \cite{su2026ultralow}, speech enhancement \cite{li2026llsdr}, multimodal generation \cite{ye2026hierarchical}, and deepfake detection \cite{wu2026quantizer}. Beyond perceptual tasks, RVQ has been widely adopted in generative recommender systems. Originating with frameworks like TIGER \cite{tiger} that assign items hierarchical semantic identifiers for zero-shot generalization, this approach has rapidly advanced. Recent developments leverage RVQ for conversational recommendation \cite{talkplay}, discrete diffusion-based bundle construction \cite{ddbc}, stabilizing generation via reference vectors \cite{r3vae}, and accommodating the power-law distribution of user-item interactions through hyperbolic spaces \cite{hyprqvae_recsys}.
+Residual Quantized Variational Autoencoders has been successfully applied across a wide range of domains. In image generation, Residual Vector Quantization reduces the sequence length for autoregressive modeling while maintaining high fidelity \cite{lee2022rqvae}, and has been further extended to discrete diffusion models \cite{resgen}, progressive generative image compression \cite{progic}, and unified visual understanding and generation frameworks \cite{evotok}. In the audio domain, foundational Residual Vector Quantization-based codecs like SoundStream \cite{soundstream} and EnCodec \cite{encodec} provide variable-bitrate compression and serve as the standard discrete tokenizers for large-scale language-model-based audio and music generation systems \cite{audiolm, musicgen}. This foundational role in audio has since expanded into diverse applications such as low-latency speech synthesis \cite{su2026ultralow}, speech enhancement \cite{li2026llsdr}, multimodal generation \cite{ye2026hierarchical}, and deepfake detection \cite{wu2026quantizer}. Beyond perceptual tasks, Residual Vector Quantization has been widely adopted in generative recommender systems. Originating with frameworks like TIGER \cite{tiger} that assign items hierarchical semantic identifiers for zero-shot generalization, this approach has rapidly advanced. Recent developments leverage Residual Vector Quantization for conversational recommendation \cite{talkplay}, discrete diffusion-based bundle construction \cite{ddbc}, stabilizing generation via reference vectors \cite{r3vae}, and accommodating the power-law distribution of user-item interactions through hyperbolic spaces \cite{hyprqvae_recsys}.
 
-A consistent property across all of these applications is the inherent hierarchical structure induced by the residual decomposition: truncating the code tuple at any depth yields a progressively coarser but semantically coherent approximation of the input, enabling natively progressive data transmission and flexible rate-distortion trade-offs. However, all existing RVQ methods operate entirely in Euclidean space, where the flat geometry and polynomial volume growth are fundamentally mismatched with the hierarchical structure that residual quantization induces. This mismatch motivates a representation space whose geometry is itself hierarchical—hyperbolic space, whose exponentially growing volume accommodates this coarse-to-fine hierarchy with low distortion—which we review next.
+A consistent property across all of these applications is the inherent hierarchical structure induced by the residual decomposition: truncating the code tuple at any depth yields a progressively coarser but semantically coherent approximation of the input, enabling natively progressive data transmission and flexible rate-distortion trade-offs. However, all existing Residual Vector Quantization methods operate entirely in Euclidean space, where the flat geometry and polynomial volume growth are fundamentally mismatched with the hierarchical structure that residual quantization induces.
+This motivates the use of hyperbolic geometry, which is known to be more suited to represent hierarchies. 
 
 \section{Hyperbolic Representation Learning}
 \label{sec:hyperbolic_repr}
 
-Hyperbolic geometry offers a continuous analogue of discrete tree structures. In a $d$-dimensional hyperbolic space of constant negative curvature, the volume of a geodesic ball grows exponentially with its radius, in stark contrast to the polynomial growth of Euclidean space \cite{cannon1997hyperbolic}. This geometric property makes hyperbolic manifolds particularly well-suited for embedding hierarchical data with low distortion. Sala et al.\ \cite{sala2018representation} formalized this connection by proving that any weighted tree with $n$ nodes can be embedded into a two-dimensional hyperbolic space with arbitrarily low distortion, whereas achieving comparable fidelity in Euclidean space requires $\mathcal{O}(n)$ dimensions.
+ In a $d$-dimensional hyperbolic space of constant negative curvature, the volume of a geodesic ball grows exponentially with its radius, in stark contrast to the polynomial growth of Euclidean space \cite{cannon1997hyperbolic}. This geometric property makes hyperbolic manifolds particularly well-suited for embedding hierarchical data with low distortion. Sala et al.\ \cite{sala2018representation} formalized this connection by proving that any weighted tree with $n$ nodes can be embedded into a two-dimensional hyperbolic space with arbitrarily low distortion, whereas achieving comparable fidelity in Euclidean space requires $\mathcal{O}(n)$ dimensions.
 
-The application of hyperbolic geometry to representation learning was pioneered by Nickel and Kiela \cite{nickel2017poincare}, who demonstrated that Poincar\'e embeddings efficiently capture large-scale taxonomies with far fewer dimensions. Ganea et al.\ \cite{ganea2018hyperbolic} formalized the extension of neural network operations to hyperbolic space using M\"obius gyrovector algebra \cite{ungar2009gyrovector}, allowing entire feed-forward architectures to operate in the Poincar\'e ball. Since then, hyperbolic neural networks have been successfully applied across diverse domains, including computer vision \cite{khrulkov2020hyperbolic, atigh2022hyperbolic, mettes2024hyperbolic} and audio source separation \cite{petermann2023hyperbolic}. Closer to our setting, Mathieu et al.\ \cite{mathieu2019poincare} introduced the Poincar\'e Variational Autoencoder ($\mathcal{P}$-VAE), demonstrating that hierarchical structure naturally emerges in hyperbolic latent spaces without explicit supervision. More recently, several works have explored combining hyperbolic geometry with vector quantization. The motivation is geometric: a codebook embedded in hyperbolic space can be arranged so that coarse, generic codewords sit near the origin and fine-grained codewords spread toward the boundary, letting the discrete bottleneck reflect the latent hierarchy of the data rather than imposing a flat partition of the latent space. Hyperbolic VQ-VAE approaches therefore map continuous data and discrete codebooks into hyperbolic space. Methods such as HyperVQ \cite{hypervq} formulate codebook assignment via hyperbolic logistic regression, while others like HVQ-VAE \cite{hvqvae} embed both data and codebooks directly into the Poincar\'e ball and adapt clustering to the manifold. These hyperbolic discrete bottlenecks have seen rapid adoption across fields, including graph generation \cite{bu2025ggball}, semantic tokenization \cite{yao2026zeroshot, wang2026varlenrec}, and audio processing \cite{girish2026prosody}. However, a recurring limitation across these VQ-VAE extensions is their reliance on Euclidean training machinery. Specifically, the Straight-Through Estimator (STE) copies gradients through the identity function, ignoring the fact that gradient transport on a curved manifold requires proper Riemannian operations.
+The application of hyperbolic geometry to representation learning was pioneered by Nickel and Kiela \cite{nickel2017poincare}, who demonstrated that Poincar\'e embeddings efficiently capture large-scale taxonomies with far fewer dimensions. Ganea et al.\ \cite{ganea2018hyperbolic} formalized the extension of neural network operations to hyperbolic space using M\"obius gyrovector algebra \cite{ungar2009gyrovector}, allowing entire feed-forward architectures to operate in the Poincar\'e ball. Since then, hyperbolic neural networks have been successfully applied across diverse domains, including computer vision \cite{khrulkov2020hyperbolic, atigh2022hyperbolic, mettes2024hyperbolic} and audio source separation \cite{petermann2023hyperbolic}. Hyperbolic geometry has also been applied to VAEs, Mathieu et al.\ \cite{mathieu2019poincare} introduced the Poincar\'e Variational Autoencoder ($\mathcal{P}$-VAE), demonstrating that hierarchical structure naturally emerges in hyperbolic latent spaces without explicit supervision. Because of this inductive bias, several recent works have explored combining hyperbolic geometry with vector quantization \cite{hypervq, hvqvae}. These hyperbolic discrete bottlenecks have seen rapid adoption across fields, including graph generation \cite{bu2025ggball}, semantic tokenization \cite{yao2026zeroshot, wang2026varlenrec}, and audio processing \cite{girish2026prosody}. However, a recurring limitation across these Vector-Quantized Variational Autoencoders extensions is their reliance on Euclidean training machinery. Specifically, the Straight-Through Estimator (Straight-Through Estimator) copies gradients through the identity function, ignoring the fact that gradient transport on a curved manifold requires proper Riemannian operations.
 
-Building on these single-stage quantization methods, works such as Hyperbolic Residual Quantization (HRQ) \cite{hrqvae} and its recent applications in generative recommender systems \cite{hyprqvae_recsys} extend the multi-stage residual paradigm to the Poincar\'e ball. To compute hierarchical residuals, HRQ replaces standard Euclidean addition and subtraction with their M\"obius counterparts. However, this introduces significant limitations in residual computation. Because M\"obius addition is neither commutative nor associative, the sequential aggregation of residual codes becomes mathematically complex and prone to geometric inconsistencies and numerical instability across multiple stages. In short, while existing approaches successfully place representations on hyperbolic manifolds, they struggle to fully adapt backpropagation and residual computation to the curvature of the space. Bridging this gap—by making the fundamental operations of both quantization and residual aggregation genuinely hyperbolic—is the central objective of this work.
-\chapter{Background}
+Building on single-stage quantization methods, works such as Hyperbolic Residual Quantization (HRQ) \cite{hrqvae} and HYPRQ-VAE \cite{hyprqvae_recsys} extend the multi-stage residual paradigm to the Poincar\'e ball. To compute hierarchical residuals, HRQ replaces standard Euclidean addition and subtraction with their M\"obius counterparts. However, this introduces significant limitations in residual computation. Because M\"obius addition is neither commutative nor associative, the sequential aggregation of residual codes becomes mathematically complex and prone to geometric inconsistencies and numerical instability across multiple stages. In short, while existing approaches successfully place representations on hyperbolic manifolds, they struggle to fully adapt backpropagation and residual computation to the curvature of the space. In this work, we bridge this gap by making the fundamental operations of both quantization and residual aggregation completely hyperbolic.
+\chapter{Preliminaries}
 \label{chap:background}
 
-This chapter introduces the technical machinery on which the remainder of the thesis builds. We first review discrete representation learning through Vector Quantization (\S\ref{sec:bg_vq}) and its multi-stage extension, Residual Vector Quantization (\S\ref{sec:bg_rvq}), paying particular attention to the Straight-Through Estimator and the gradient flow it induces, as these are central to the methods developed later. We then present the elements of hyperbolic geometry required to lift these operations onto a curved manifold (\S\ref{sec:bg_hyperbolic}): the Poincar\'e ball model, the gyrovector formalism that endows it with algebraic structure, the exponential and logarithmic maps, parallel transport, and the relationship between Euclidean and Riemannian gradients. Throughout, we restrict the exposition to the constructs that are strictly necessary to formulate the residual aggregation scheme, the hyperbolic Straight-Through Estimator, the gradient-routing correction, and the numerical-stabilization techniques introduced in Chapter~\ref{chap:methods}.
+This chapter introduces the technical background on which the remainder of the thesis builds. We first review discrete representation learning through Vector Quantization (\S\ref{sec:bg_vq}) and its multi-stage extension, Residual Vector Quantization (\S\ref{sec:bg_rvq}), paying particular attention to the Straight-Through Estimator on which the method developed later builds; the training objective it requires and the gradient flow it induces in the residual cascade are analysed where they are first needed, in Chapter~\ref{chap:methods}. We then present the elements of hyperbolic geometry required to lift these operations onto a curved manifold (\S\ref{sec:bg_hyperbolic}): the Poincar\'e ball model, the gyrovector formalism that endows it with algebraic structure, the exponential and logarithmic maps, parallel transport, and the relationship between Euclidean and Riemannian gradients. Throughout, we restrict the exposition to the constructs that are strictly necessary to formulate the residual aggregation scheme, the hyperbolic Straight-Through Estimator, the gradient-routing correction, and the numerical-stabilization techniques introduced in Chapter~\ref{chap:methods}.
 
 \section{Vector-Quantized Variational Autoencoders}
 \label{sec:bg_vq}
-The Vector Quantized Variational Autoencoder (VQ-VAE) \cite{vqvae} learns a discrete latent representation of continuous data. Given an input signal $x$, an encoder network $E$ maps it to a continuous latent representation $z_e = E(x) \in \mathbb{R}^D$. A trainable codebook $C = \{c_1, \dots, c_K\} \subset \mathbb{R}^D$ of $K$ entries is then used to discretize this continuous vector. The quantization operator selects the nearest codeword under the Euclidean distance:
+The Vector Quantized Variational Autoencoder (Vector-Quantized Variational Autoencoders) \cite{vqvae} learns a discrete latent representation of continuous data. Given an input signal $x$, an encoder network $E$ maps it to a continuous latent representation $z_e = E(x) \in \mathbb{R}^D$. A trainable codebook $C = \{c_1, \dots, c_K\} \subset \mathbb{R}^D$ of $K$ entries is then used to discretize this continuous vector. The quantization operator selects the nearest codeword under the Euclidean distance:
 \begin{equation}
     q(z_e) = c_k, \quad \text{where } k = \operatorname{argmin}_j \| z_e - c_j \|^2_2.
 \end{equation}
-The selected vector $q(z_e)$ is subsequently passed to a decoder $G$ that reconstructs the original signal as $\hat{x} = G(q(z_e))$.
+The selected vector $q(z_e)$ is subsequently passed to a decoder $G$ that reconstructs the original signal as $\hat{x} = G(q(z_e))$. The nearest-neighbour assignment $\operatorname{argmin}$ is a piecewise-constant function, so its derivative with respect to $z_e$ is zero almost everywhere and undefined at cell boundaries. Consequently, no gradient can flow from the decoder back to the encoder through the quantization step. The Vector-Quantized Variational Autoencoders circumvents this with the Straight-Through Estimator (Straight-Through Estimator) \cite{straight_through_estimator}, which copies the gradient from the quantized output directly to the encoder output, treating the quantizer as the identity during backpropagation.
 
 \paragraph{The Straight-Through Estimator.}
-The nearest-neighbour assignment $\operatorname{argmin}$ is a piecewise-constant function, so its derivative with respect to $z_e$ is zero almost everywhere and undefined at cell boundaries. Consequently, no gradient can flow from the decoder back to the encoder through the quantization step. The VQ-VAE circumvents this with the Straight-Through Estimator (STE) \cite{straight_through_estimator}, which copies the gradient from the quantized output directly to the encoder output, treating the quantizer as the identity during backpropagation. Operationally, the forward value is computed while the difference $q(z_e) - z_e$ is held under the stop-gradient operator $\operatorname{sg}[\cdot]$:
+ Operationally, the forward value is computed while the difference $q(z_e) - z_e$ is held under the stop-gradient operator $\operatorname{sg}[\cdot]$:
 \begin{equation}
     \label{eq:bg_ste}
-    \hat{z}_{\text{STE}} = z_e + \operatorname{sg}\big[q(z_e) - z_e\big].
+    \hat{z}_{\text{Straight-Through Estimator}} = z_e + \operatorname{sg}\big[q(z_e) - z_e\big]
 \end{equation}
-This expression evaluates to $q(z_e)$ in the forward pass, yet because the stop-gradient term is treated as a constant, its Jacobian reduces to $\partial \hat{z}_{\text{STE}} / \partial z_e = I$, so the decoder gradient is passed unaltered to the encoder.
-
-\paragraph{Training objective.}
-Since the codebook is not reached by the reconstruction gradient through the STE, VQ-VAE is trained with the composite objective
-\begin{equation}
-    \label{eq:bg_vq_loss}
-    \mathcal{L} = \underbrace{\| x - \hat{x} \|_2^2}_{\text{reconstruction}}
-    + \underbrace{\| \operatorname{sg}[z_e] - q(z_e) \|_2^2}_{\text{codebook}}
-    + \beta \underbrace{\| z_e - \operatorname{sg}[q(z_e)] \|_2^2}_{\text{commitment}},
-\end{equation}
-where $\operatorname{sg}[\cdot]$ denotes the stop-gradient operator and $\beta$ is a weighting hyperparameter. The codebook term pulls the selected centroids towards the encoder outputs, whereas the commitment term pulls the encoder outputs towards their assigned centroids, preventing the continuous representation from diverging from the discrete dictionary. A persistent difficulty of this framework is \emph{codebook collapse}, in which only a small fraction of entries is ever selected \cite{collapse_1}. We mitigate it with a \emph{dead-code revival} heuristic: the usage of each codebook entry is tracked across batches, and any entry whose usage falls below a fixed threshold $\tau_{\text{dead}}$ is flagged as dead and reinitialized to a randomly selected encoder output from the current batch. This continually recycles under-utilized codewords towards regions of the latent space that the encoder actually populates, keeping codebook utilization high.
+where $sg[\cdot]$ denotes the stop-gradient operator. This expression evaluates to $q(z_e)$ in the forward pass, yet because the stop-gradient term is treated as a constant, its Jacobian reduces to $\partial \hat{z}_{\text{Straight-Through Estimator}} / \partial z_e = I$, so the decoder gradient is passed unaltered to the encoder.
 
 \section{Residual Vector Quantization}
 \label{sec:bg_rvq}
-Residual Vector Quantization (RVQ) extends the single-stage paradigm by quantizing the latent representation in $D$ successive stages, each with its own codebook \cite{soundstream}. Let $r_0 = z_e$ denote the encoder output. At stage $i$ the current residual $r_{i-1}$ is quantized to a codeword $q_i$, and the residual for the next stage is obtained by subtracting the selected codeword:
+Residual Vector Quantization (Residual Vector Quantization) extends the single-stage paradigm by quantizing the latent representation in $N$ successive stages, each with its own codebook \cite{soundstream}. Let $r_0 = z_e$ denote the encoder output. At stage $i$ the current residual $r_{i-1}$ is quantized to a codeword $q_i$, and the residual for the next stage is obtained by subtracting the selected codeword:
 \begin{equation}
     \label{eq:bg_rvq_residual}
     r_i = r_{i-1} - q_i.
 \end{equation}
-The final representation is the sum of the selected codewords across all stages, $\hat{z} = \sum_{i=1}^{D} q_i$. This coarse-to-fine decomposition constructs a virtual codebook of effective size $K^D$ without enlarging the physical dictionary or the token sequence length, and induces a natural hierarchy: early stages capture coarse, global structure while later stages encode progressively finer detail. This makes RVQ especially effective for multi-scale signals such as audio, where global structure is resolved in the initial stages and fine-grained acoustic texture in the deeper ones.
+Because each stage selects its codeword $q_i$ by the same non-differentiable nearest-neighbour rule as single-stage VQ (\S\ref{sec:bg_vq}), the Straight-Through Estimator of Eq.~\ref{eq:bg_ste} is applied independently at every one of the $D$ stages. The final representation is the sum of the selected codewords across all stages, $\hat{z} = \sum_{i=1}^{N} q_i$. This coarse-to-fine decomposition constructs a virtual codebook of effective size $K^N$ without enlarging the physical dictionary or the token sequence length, and induces a natural hierarchy: early stages capture coarse, global structure while later stages encode progressively finer detail. This makes Residual Vector Quantization especially effective for multi-scale signals such as audio, where global structure is resolved in the initial stages and fine-grained acoustic texture in the deeper ones. 
 
-\paragraph{Gradient routing in Euclidean RVQ.}
-The gradient flow induced by stacking STEs is a property we will rely on repeatedly, so we make it explicit here. Combining the STE Jacobian $\partial q_i/\partial r_{i-1} = I$ (Eq.~\ref{eq:bg_ste}) with the residual update of Eq.~\ref{eq:bg_rvq_residual}, the Jacobian of the residual branch is
-\begin{equation}
-    \label{eq:bg_firewall}
-    \frac{\partial r_i}{\partial r_{i-1}}
-    = \frac{\partial (r_{i-1} - q_i)}{\partial r_{i-1}}
-    = I - I = 0.
-\end{equation}
-The residual branch therefore transmits no gradient: each codebook is reached by the reconstruction signal directly through its own $q_i$, while the encoder receives exactly one clean copy of the gradient, regardless of the number of stages. This exact cancellation, which we will refer to as the residual gradient \emph{firewall}, keeps the magnitude of the gradient delivered to the encoder stable as the depth $D$ grows. As shown in Chapter~\ref{chap:methods}, this cancellation is specific to the flat geometry and does not survive the transition to a curved manifold.
-
-\section{Hyperbolic Geometry and the Poincar\'e Ball}
+\section{Hyperbolic Geometry}
 \label{sec:bg_hyperbolic}
 Hyperbolic space is a Riemannian manifold of constant negative curvature. Its defining feature is that the volume of a geodesic ball grows \emph{exponentially} with its radius, as opposed to the polynomial growth of Euclidean space \cite{cannon1997hyperbolic}. This expansion rate matches that of the node count of a regular tree, which is why hyperbolic spaces embed hierarchical and tree-like data with far lower distortion than Euclidean spaces of comparable dimension \cite{sala2018representation, nickel2017poincare}. Among the several isometric models of hyperbolic geometry, we adopt the Poincar\'e ball, which is well suited to gradient-based learning because its operations admit closed forms and its points are easily constrained to a bounded region \cite{ganea2018hyperbolic}.
 
@@ -290,7 +289,7 @@ which maps any two points of $\mathbb{D}_c^D$ to a point inside the ball, and th
     \label{eq:bg_gyration}
     \operatorname{gyr}[u, v]\,w = \ominus(u \oplus_c v) \oplus_c \big(u \oplus_c (v \oplus_c w)\big),
 \end{equation}
-an automorphism of the ball that acts as a rotation: $u \oplus_c v = \operatorname{gyr}[u, v]\,(v \oplus_c u)$. The gyration encodes the holonomy of the curved space and, as we will see, is the source of the rotational mismatch that breaks the Euclidean gradient firewall.
+an automorphism of the ball that acts as a rotation: $u \oplus_c v = \operatorname{gyr}[u, v]\,(v \oplus_c u)$. The gyration encodes the holonomy of the curved space and, as we will see, is the source of the rotational mismatch that breaks backpropagation.
 
 \subsection{Geodesic Distance}
 The geodesic distance induced by the metric \ref{eq:bg_metric} admits the closed form
@@ -333,27 +332,579 @@ Because the metric \ref{eq:bg_metric} rescales the inner product by $(\lambda_x^
 \end{equation}
 A correct backward pass on the Poincar\'e ball therefore involves converting Euclidean gradients to Riemannian ones (dividing by $(\lambda^c)^2$), transporting them between tangent spaces via Eq.~\ref{eq:bg_pt}, and converting back. As the conformal factor diverges near the boundary, these conversions can amplify gradient magnitudes substantially, foreshadowing the stability analysis of Chapter~\ref{chap:methods}.
 
-\chapter{Methods}
+
+\chapter{Method}
 \label{chap:methods}
 
-This chapter details the methodology introduced to integrate hyperbolic geometry into the quantization process of Residual Vector Quantized Variational Autoencoders (RQ-VAEs). Building on the background of Chapter~\ref{chap:background}, we lift VQ and RVQ onto the Poincar\'e ball and concentrate first on the gradient that the quantizer must propagate to the encoder. We show that the Euclidean straight-through estimator is geometrically invalid on a curved manifold and replace it with a parallel-transport estimator that is additionally stabilized against the catastrophic cancellation it incurs near the boundary; making the estimator exact, however, dismantles the residual gradient \emph{firewall} of \S\ref{sec:bg_rvq}, so we then analyze the resulting gradient leakage, its compounding across stages, and the correction that restores stability (\S\ref{sec:hste}). We next turn to the residual recursion itself: lifting it onto the ball, exposing the mismatch that a naive transliteration of Euclidean RVQ incurs, and justifying the M\"obius residual--aggregation convention that keeps the cascade an exact coarse-to-fine decomposition (\S\ref{sec:residagg}). Throughout, we also describe the hyperbolic training objectives that enforce hierarchical inductive biases (\S\ref{sec:hyp_objectives}).
+This chapter develops the Geometry-aware Hyperbolic Residual Quantization module. The pipeline consists of two main components that correctly lift residual quantization onto the Poincar\'e ball: Hyperbolic Residual Aggregation, which provides a geometrically correct coarse-to-fine decomposition in the forward pass, and the discounted Hyperbolic Straight-Through Estimator, which routes the correct gradient back to the encoder during the backward pass.
 
-\section{The Hyperbolic Straight-Through Estimator}
+\section{Hyperbolic Residual Aggregation}
+\label{sec:residagg}
+\label{sec:newmethod}
+Residual quantization rests on a single algebraic guarantee: the rule that \emph{removes} a code from the running residual and the rule that \emph{re-assembles} the codes into the reconstruction must be exact inverses of each other. In Euclidean space this holds for free. Writing $r_0=z_e$ for the encoder point and $\hat z_i$ for the aggregate of the first $i$ codes, the update $r_i=r_{i-1}-q_i$ and the sum $\hat z=\sum_i q_i$ are mutually inverse because addition is commutative and associative; the residual entering each stage therefore equals the part of the encoder point not yet captured by the earlier codes (the \emph{true residual} $R_i^{\text{true}}=z_e-\hat z_i=r_i$) and the decomposition \emph{telescopes}, so the codes recompose to the encoder point up to the final, unquantized residual, $\hat z+r_{N}=z_e$. Each codebook is thus fitted to the genuine reconstruction error left by the ones before it, which is the entire purpose of the coarse-to-fine cascade.
+
+On the Poincar\'e ball this guarantee is no longer automatic. M\"obius addition is neither commutative nor associative (\S\ref{sec:bg_hyperbolic}), so the naive transliteration of the recursion (replacing the subtraction by a \emph{right} M\"obius subtraction $r_i=r_{i-1}\oplus_c(-q_i)$ and the sum by a left-associated M\"obius addition $\big(\cdots(q_1\oplus_c q_2)\oplus_c\cdots\big)\oplus_c q_{N}$) no longer inverts itself. The tracked residual drifts away from the true residual, compounds with depth and the codes no longer recompose to $z_e$. This failure is analysed in full in Appendix~\ref{sec:hrq} (Eqs.~\ref{eq:prev_residual} and~\ref{eq:true_residual}). Now we construct the forward-pass repair.
+
+\paragraph{The HRA convention.} The fix is to choose the residual and aggregation rules so that they cancel \emph{by construction}, using the one cancellation law the gyrogroup does provide. The left-cancellation law
+\begin{equation}
+    \label{eq:left_cancel}
+    a \oplus_c\big((-a)\oplus_c b\big) = b
+\end{equation}
+states that adding $a$ on the left exactly undoes subtracting $a$ on the left. Pairing a \emph{left} M\"obius subtraction in the residual update with a \emph{reverse-nested} (right-associated) aggregation,
+\begin{equation}
+    \label{eq:hrq_residual}
+    r_i = (-q_i)\oplus_c r_{i-1},
+    \qquad
+    \hat z = q_1\oplus_c\big(q_2\oplus_c(\cdots\oplus_c q_{N})\big),
+\end{equation}
+matches each subtraction to precisely the addition that inverts it. We call this pairing of a left-subtraction residual with a reverse-nested aggregation the \emph{Hyperbolic Residual Aggregation} (HRA) convention. Unlike the Euclidean case, where any ordering works, the two rules here form an inverse pair \emph{by design}, and this single choice is what restores the telescoping property, as the rest of this section establishes.
+
+\paragraph{Exact telescoping.} The HRA convention inverts the cascade stage by stage. The first stage gives $r_1=(-q_1)\oplus_c z_e$, which Eq.~\ref{eq:left_cancel} (taking $a=q_1$, $b=z_e$) inverts as $q_1\oplus_c r_1=z_e$. The same identity holds at every stage, $q_i\oplus_c r_i=r_{i-1}$, so unrolling the recursion recomposes the encoder point without error,
+\begin{equation*}
+    q_1\oplus_c\big(q_2\oplus_c(\cdots\oplus_c(q_{N}\oplus_c r_{N}))\big)=z_e .
+\end{equation*}
+Dropping the final unquantized residual $r_{N}$ leaves the reconstruction $\hat z$ of Eq.~\ref{eq:hrq_residual}, which therefore coincides with $z_e$ up to that tail. This is exactly the Euclidean telescoping property, now recovered on the ball.
+
+\paragraph{The residual mismatch collapses to a pure rotation.} Telescoping pins down the reconstruction, but we also need the tracked residual $r_i$ to carry the right \emph{magnitude} of reconstruction error, since that magnitude is the quantity each codebook is fitted to. Under HRA the tracked residual still differs from the true residual $R_i^{\text{true}}$, but the discrepancy is no longer a drift: pulling the partial aggregate $\hat z_i=q_1\oplus_c(\cdots\oplus_c q_i)$ back out of $z_e$ through the reverse nesting (repeatedly applying the gyration form of left cancellation, $-(a\oplus_c b)\oplus_c(a\oplus_c c)=\operatorname{gyr}[a,b]\big((-b)\oplus_c c\big)$) relates the two by a composition of gyrations,
+\begin{equation}
+    \label{eq:hrq_gyration}
+    R_i^{\text{true}} = \Gamma_i\, r_i,
+    \qquad
+    \Gamma_i = \operatorname{gyr}\!\big[q_1,\;q_2\oplus_c\cdots\oplus_c q_i\big]\;\cdots\;\operatorname{gyr}\!\big[q_{i-1},\,q_i\big].
+\end{equation}
+Each factor is a gyration, hence (Eq.~\ref{eq:bg_gyration}) a norm-preserving rotation of the ball about the origin, so $\Gamma_i$ rotates the \emph{direction} of the residual while adding \emph{zero} magnitude error:
+\begin{equation}
+    \label{eq:hrq_norm}
+    \big\|R_i^{\text{true}}\big\| = \big\|r_i\big\| .
+\end{equation}
+The tracked residual thus carries exactly the magnitude of the true reconstruction error, and the coarse-to-fine magnitude decomposition that residual quantization relies on stays faithful at every depth. This is the precise sense in which the HRA convention repairs the forward cascade. It stands in sharp contrast with the naive convention, whose mismatch is not a norm-preserving rotation but a genuine drift that corrupts the residual magnitude, compounds with depth, and prevents the codes from recomposing to $z_e$ (Appendix~\ref{sec:hrq}). 
+
+Figure~\ref{fig:residagg} makes the contrast concrete on the Poincar\'e disk: the same coarse-to-fine codewords, recombined under the two conventions, reach reconstructions that differ by exactly this gyration term, with the HRA aggregation landing on $z_e$ up to the unquantized tail $r_{N}$ while the naive aggregation drifts away.
+
+\begin{figure}[]
+    \centering
+    \includegraphics[width=0.42\textwidth]{thesis/aggregation.png}
+    \caption{Residual aggregation of the same codewords under the two conventions of \S\ref{sec:residagg}, on the Poincar\'e disk. A single encoder point $z_e$ is residual-quantized into coarse-to-fine codes $q_1,q_2,q_3$ (a dominant $q_1$ oriented toward $z_e$ followed by progressively smaller refinements of the shrinking residual); each aggregation is drawn as the chain of M\"obius hops from the origin $O$ that sums these gyrovectors. The HRA reverse-nested order $q_1\oplus_c(q_2\oplus_c q_3)$ (green) inverts the left-subtraction recursion (Eq.~\ref{eq:hrq_residual}) and reaches $\hat z_{\mathrm{HRA}}$, which coincides with $z_e$ up to the final residual. The naive left-associated order $(q_1\oplus_c q_2)\oplus_c q_3$ (orange, Eq.~\ref{eq:prev_residual}) misplaces the gyration factors and drifts to $\hat z_{\mathrm{naive}}$; the inset zooms on $z_e$. The instance is illustrative: $z_e$ is placed at moderate radius so the gap is legible. The drift is small for shallow, well-quantized residuals, and compounds with depth and proximity to the ball boundary, as analysed in Appendix~\ref{sec:hrq}.}
+    \label{fig:residagg}
+\end{figure}
+
+\section{The Discounted Hyperbolic Straight-Through Estimator}
 \label{sec:hste}
-The nearest-neighbour assignment is non-differentiable, and in Euclidean VQ-VAE the gradient is delivered to the encoder by the straight-through estimator of Eq.~\ref{eq:bg_ste}, whose Jacobian is the identity. Transplanting this estimator verbatim to the Poincar\'e ball is geometrically invalid for two related reasons. First, the additive correction $z_e + \operatorname{sg}[q(z_e)-z_e]$ is ordinary vector addition, which does not respect the manifold and can leave the ball. Second, and more fundamentally, the identity Jacobian implicitly identifies the tangent spaces $T_{z_e}\mathbb{D}_c^D$ and $T_{q}\mathbb{D}_c^D$ as the same vector space. They are not: a cotangent vector defined at the code $q$ cannot be equated with one at $z_e$ without parallel transport (\S\ref{sec:bg_hyperbolic}), and the conformal factor differs between the base points, $\lambda^c_{z_e}\neq\lambda^c_q$. Copying the gradient unchanged therefore corrupts both its magnitude---it omits the $\lambda$-rescaling implied by the Riemannian metric (Eq.~\ref{eq:bg_riemgrad})---and its direction---it omits the gyration carried by transport (Eq.~\ref{eq:bg_pt}).
+\label{sec:blockste}
 
-\paragraph{Parallel-transport backward pass.}
-The substance of the estimator is its backward pass. The decoder delivers a Euclidean gradient $g_q := \partial L/\partial q$ at the code $q$; to move it to $z_e$ correctly we apply the three-step Riemannian procedure of \S\ref{sec:bg_hyperbolic} (Eqs.~\ref{eq:bg_pt} and~\ref{eq:bg_riemgrad}): (i) convert $g_q$ to a Riemannian gradient at $q$ by dividing by $(\lambda^c_q)^2$; (ii) parallel-transport the resulting tangent vector from $q$ to $z_e$ along the connecting geodesic, which rescales it by $\lambda^c_q/\lambda^c_{z_e}$ and rotates it by $\operatorname{gyr}[z_e,-q]$; and (iii) convert back to a Euclidean gradient at $z_e$ by multiplying by $(\lambda^c_{z_e})^2$. Composing the three steps,
+To mitigate compounding geometric distortions during backpropagation through the residual cascade, we introduce the Discounted Hyperbolic Straight-Through Estimator (HSTE). This estimator transports a single, geometrically exact reconstruction gradient from the aggregate reconstruction $\hat z$ directly to the encoder output $z_e$, bypassing all intermediate codes $q_i$ and residuals $r_i$ ($i>0$). This block-level routing mechanism parallels the Euclidean RQ-VAE behavior (\S\ref{sec:firewall}), delivering a depth-independent gradient to the encoder while rigorously respecting the hyperbolic geometry. The method comprises two key components: a discounted single-step hyperbolic transport and a block-level gradient routing strategy via stop-gradients.
+
+\paragraph{Discounted Hyperbolic Parallel Transport.}
+The foundation of the estimator is the exact parallel transport of a gradient between two points on the Poincar\'e ball. In the forward pass, the HSTE acts as the identity mapping,
+\begin{equation}
+    \label{eq:hste_forward}
+    \mathrm{HSTE}(z_e,q) = q,
+\end{equation}
+while modifying only the backward pass. Given a Euclidean gradient $g_q := \partial L/\partial q$ at a code $q$, transporting it to $z_e$ requires three Riemannian operations (\S\ref{sec:bg_hyperbolic}): (i) conversion to a Riemannian gradient at $q$ by dividing by the squared conformal factor $(\lambda^c_q)^2$; (ii) parallel transport along the geodesic from $q$ to $z_e$, which scales the vector by $\lambda^c_q/\lambda^c_{z_e}$ and rotates it by the gyration $\operatorname{gyr}[z_e,-q]$; and (iii) conversion back to a Euclidean gradient at $z_e$ via multiplication by $(\lambda^c_{z_e})^2$. We however decide to skip the third step, as it would require the gradient to be multiplied by $(\lambda^c_{z_e})^2$, which diverges as $z_e$ approaches the boundary of the ball. The complete backward pass is therefore:
 \begin{equation}
     \label{eq:hste_backward}
     \frac{\partial L}{\partial z_e}
-    = (\lambda^c_{z_e})^2\; P^c_{q\to z_e}\!\Big(\tfrac{1}{(\lambda^c_q)^2}\,g_q\Big)
-    = \frac{\lambda^c_{z_e}}{\lambda^c_q}\,\operatorname{gyr}[z_e,-q]\,g_q .
+    = P^c_{q\to z_e}\!\Big(\tfrac{1}{(\lambda^c_q)^2}\,g_q\Big)
+    = \frac{1}{\lambda^c_q}\,\operatorname{gyr}[z_e,-q]\,g_q .
 \end{equation}
-We call the estimator defined by Eqs.~\ref{eq:hste_forward}--\ref{eq:hste_backward} the \emph{hyperbolic straight-through estimator} (HSTE). The Euclidean STE is recovered only in the flat limit, where $\lambda^c$ becomes constant and the gyration collapses to the identity, so that Eq.~\ref{eq:hste_backward} reduces to $\partial L/\partial z_e = g_q$. A practical variant, used when the encoder is updated by a Riemannian optimizer, omits the re-conversion of step (iii) and returns the Riemannian gradient $P^c_{q\to z_e}\!\big(g_q/(\lambda^c_q)^2\big)$ directly; this cancels the $(\lambda^c_{z_e})^2$ factor at the source and avoids the boundary amplification analyzed in \S\ref{sec:firewall}.
+Note that because $q$ closely approximates $z_e$, evaluating the gyration via its standard formulation is prone to catastrophic cancellation; we instead utilize a numerically stable, exact reformulation detailed in Appendix~\ref{app:gyration}. This formulation, which we term the \emph{Discounted HSTE}, ensures the transported gradient remains bounded even near the boundary of the Poincar\'e ball, preserving the expressiveness of the representation in high-curvature regions.
 
-\paragraph{Numerically stable gyration.}
-The gyration in Eq.~\ref{eq:hste_backward} is the numerically delicate component, precisely because $q$ is a quantization of $z_e$ and the two points are close. Writing the closed-form gyration as $\operatorname{gyr}[A,B]\,v = v + 2\,(aA+bB)/d$ with $A=q$ and $B=-z_e$, the scalar coefficients and denominator are
+\paragraph{Block-Level Gradient Routing.}
+To circumvent the instability of recursive gradient transport, we decouple the intermediate residuals from the computational graph. By applying a stop-gradient operation to every intermediate residual ($r_i\leftarrow\operatorname{sg}[r_i]$ for $i\ge 1$) and to the initial point ($q_1 \leftarrow \operatorname{sg}[q_1]$), the codes propagate their forward values to the aggregation (Eq.~\ref{eq:hrq_residual}) without backpropagating the reconstruction gradient through the cascade. This eliminates the compounding Jacobian chain (Eq.~\ref{eq:stack}). Instead, the encoder receives the reconstruction gradient via a single HSTE step from the aggregate reconstruction $\hat z = q_1\oplus_c(q_2\oplus_c(\cdots\oplus_c q_{n_q}))$ (Eq.~\ref{eq:hrq_residual}) directly to $r_0=z_e$. The full decoder gradient $g_{\hat z}:=\partial L_{\text{rec}}/\partial\hat z$ is transported using Eq.~\ref{eq:hste_backward} with $q=\hat z$. Codebooks remain optimizable through their respective per-stage codebook and commitment losses (Eq.~\ref{eq:rqvae_loss}), analogous to standard residual vector quantization. Ultimately, the encoder receives a holistic reconstruction gradient via a single, depth-independent parallel transport.
+
+\section{Assembling the Geometry-aware Hyperbolic Residual Quantization module}
+\label{sec:ghrq}
+The two repairs are independent and compose into a single residual-quantization module. Hyperbolic Residual Aggregation (Eq.~\ref{eq:hrq_residual}) makes the codes telescope so they recompose to the encoder point on the ball; the block-level discounted Hyperbolic Straight-Through Estimator (Eq.~\ref{eq:hste_riemannian}) detaches the per-stage residuals and transports one geometrically correct, depth-independent reconstruction gradient from the aggregate to the encoder; and a set of numerical-stabilization techniques keep the estimator well-conditioned where the conformal factors diverge. The codebooks themselves are trained throughout by their per-stage codebook and commitment terms of Eq.~\ref{eq:rqvae_loss}, exactly as in Euclidean Residual Vector Quantization.
+
+At curvature $c=0$ the M\"obius operations reduce to vector addition, the conformal factor becomes constant, the gyration collapses to the identity, the discounted Hyperbolic Straight-Through Estimator reduces to the Euclidean identity Straight-Through Estimator, and Hyperbolic Residual Aggregation reduces to additive Residual Vector Quantization, so Geometry-aware Hyperbolic Residual Quantization recovers standard residual vector quantization exactly. We define the precise flag combinations and the baselines they are compared against in \S\ref{sec:configs}, and report results across four modalities in Chapter~\ref{chap:experiments}.
+
+
+\chapter{Experimental Setup}
+\label{chap:expsetup}
+
+The methodology introduced in Chapter~\ref{chap:methods} provides a geometry- and architecture-agnostic framework for residual quantization on the Poincar\'e ball. To empirically validate whether this hyperbolic formulation offers advantages over Euclidean residual quantization, and to isolate the contributions of the block-level estimator proposed in \S\ref{sec:blockste}, we evaluate the quantizer across four distinct domains: image reconstruction and generation (MNIST, CIFAR-100), language hierarchy embedding (WordNet), sequential recommendation (Amazon Reviews), and neural audio coding (LibriTTS at 24\,kHz). These tasks span both the shallow regime ($n_q=4$), typical of prior hyperbolic residual quantization studies, and the deep regime ($n_q=12$), where the numerical instabilities discussed in \S\ref{sec:firewall} become pronounced.
+
+Across all experiments, the quantizer geometry and gradient routing serve as the sole independent variables. The encoder, decoder, optimizer, data pipeline, and evaluation protocols remain strictly fixed within each task. We evaluate three distinct quantizer configurations: a Euclidean residual vector quantization baseline, a naive hyperbolic quantizer (\S\ref{sec:firewall}), and the proposed block-level estimator incorporating Riemannian discounting and gradient correction, termed \emph{Geometry-aware Hyperbolic Residual Quantization-VAE} (\S\ref{sec:blockste}). The definitions of these configurations, along with task descriptions, architectures, hyperparameters, and evaluation metrics, are detailed in \S\ref{sec:configs}--\S\ref{sec:metrics}. All experiments are conducted on a SLURM-managed HPC cluster utilizing NVIDIA A100 and H100 GPUs. The source code is publicly available.\footnote{\url{https://github.com/Sland0r/VAEs}}
+
+\section{Compared Quantizer Configurations}
+\label{sec:configs}
+
+The experimental design isolates the impact of geometry and gradient routing by evaluating three quantizer configurations with identical capacity. For any given task, all configurations maintain an equivalent number of residual stages ($n_q$), codebook sizes, and encoder/decoder architectures.
+
+\paragraph{Euclidean (baseline).} This configuration employs standard residual vector quantization ($c=0$) with an identity straight-through estimator and an additive residual recursion ($r_i = r_{i-1}-q_i$, $\hat z=\sum_i q_i$) as described in \S\ref{sec:bg_rvq}. It serves as the primary reference baseline.
+
+\paragraph{Naive hyperbolic.} This approach represents a direct adaptation of prior hyperbolic residual quantization methods~\cite{hrqvae} ($c=1$), as detailed in \S\ref{sec:firewall}. While codebooks are situated on the Poincar\'e ball and assignments utilize squared geodesic distance, the estimator retains the Euclidean identity straight-through estimator and employs M\"obius addition (Eq.~\ref{eq:prev_residual}). Consequently, it is subject to the geometrical inaccuracies and residual leakage identified in \S\ref{sec:firewall}.
+
+\paragraph{Geometry-aware Hyperbolic Residual Quantization-VAE (ours).} The proposed estimator ($c=1$), detailed in \S\ref{sec:blockste}, integrates Hyperbolic Residual Aggregation (Hyperbolic Residual Aggregation) (\S\ref{sec:newmethod}, Eq.~\ref{eq:hrq_residual}) with single-step hyperbolic discounted transport. This comprehensive formulation constitutes the \emph{Geometry-aware Hyperbolic Residual Quantization-VAE} model, which is evaluated primarily in deep-stack scenarios. To ablate the specific impact of the gradient correction mechanism, we additionally report results for a variant omitting it, denoted as \emph{Geometry-aware Hyperbolic Residual Quantization-VAE (no gc)}.
+
+For the audio codec task, which utilizes a deep $n_q=12$ stack that inherently drives embeddings toward the manifold boundary, the Geometry-aware Hyperbolic Residual Quantization-VAE configuration incorporates the specific encoder stabilizers detailed in \S\ref{sec:tasks_audio}.
+
+\section{Tasks and Datasets}
+\label{sec:tasks}
+
+\subsection{Image Reconstruction and Generation}
+\label{sec:tasks_image}
+The image domain evaluation utilizes MNIST ($28\times28$ grayscale, $60{,}000$ training and $10{,}000$ test images) and CIFAR-100 ($32\times32$ RGB, $50{,}000$ training and $10{,}000$ test images). CIFAR-100 provides a structured two-level label hierarchy, comprising $100$ fine classes organized into $20$ coarse superclasses. This structure is utilized to evaluate unsupervised taxonomy recovery within the quantized latent space (\S\ref{sec:metrics}). Pixel values are normalized to $[-1,1]$, and no data augmentation is applied to strictly isolate the quantizer's effect.
+
+\subsection{Language Hierarchy Embedding}
+\label{sec:tasks_nlp}
+This task embeds the WordNet noun hierarchy~\cite{nickel2017poincare}, consisting of $82{,}115$ noun synsets and their associated hypernymy edges extracted via NLTK. The encoder is optimized via a contrastive InfoNCE objective, contrasting positive hypernymy edges against $50$ sampled negatives. The transitive closure is employed to strictly prevent the sampling of true ancestors as negatives. Evaluation utilizes the \emph{closure} split, which necessitates the composition of transitive relations to reconstruct held-out edges. For context, a no-model graph-composition baseline achieves approximately $80\%$ recall@10 on this split, while a global-popularity baseline attains approximately $41\%$.
+
+\subsection{Sequential Recommendation}
+\label{sec:tasks_rec}
+Adopting the semantic-ID paradigm~\cite{tiger}, this task maps individual items to a tuple of discrete codes via residual quantization. Subsequently, a sequence model predicts the codes of the next item based on user interaction history. We utilize the Beauty category of the Amazon Reviews 2014 corpus under a standard leave-one-out evaluation protocol. Items are initially encoded into $768$-dimensional sentence embeddings using a pretrained MPNet sentence-transformer. These frozen embeddings serve as the input for quantization. Consistent with standard practice, a uniqueness tie-break token is appended to disambiguate items that map to identical code tuples.
+
+\subsection{Neural Audio Coding}
+\label{sec:tasks_audio}
+The audio evaluation employs a SoundStream-style neural codec~\cite{soundstream,encodec} trained on the \texttt{train-clean-100} subset of LibriTTS at a $24$\,kHz sample rate. This setting represents the deepest evaluated stack, featuring $N=12$ residual quantizers with $1024$ codes per stage. This configuration subjects the intermediate residuals to severe boundary proximity, rigorously testing the depth-related pathologies identified in \S\ref{sec:firewall}. Due to the divergence of conformal factors near the boundary (Eq.~\ref{eq:hste_backward}), the hyperbolic codec necessitates explicit encoder stabilization, specifically an encoder-scale control and quantizer-depth dropout~\cite{soundstream}. Results are reported for a codebook dimension of $64$ over a $10$-epoch training budget.
+
+The encoder-scale control addresses the tendency of high-dimensional encoder outputs (tangent norm $\sim\!\sqrt{d}$) to map directly to the boundary via the exponential map, which saturates geodesic distance and causes vanishing gradients. We implement an auto-calibrated global multiplier on the encoder tangent vectors, targeting a median residual radius of $0.5$. This scale is maintained via an exponential moving average ($s \leftarrow 0.99s + 0.01s_{\text{batch}}$), actively preventing the drift of deep residuals toward the boundary over the course of training.
+
+\section{Model Architectures}
+\label{sec:models}
+
+\paragraph{Image Vector-Quantized Variational Autoencoders.} A convolutional Vector-Quantized Variational Autoencoders~\cite{vqvae} is employed. The encoder comprises strided $2$-D convolutions ($\text{in}\to32\to64\to128\to D$ channels) yielding a spatial downsampling factor of four, followed by the residual quantizer ($n_q=4$, with latent dimension $D=8$ and $128$ codes per stage for MNIST, and $D=16$ and $512$ codes per stage for CIFAR-100). The decoder utilizes symmetric transposed convolutions. For generative modeling, an RQ-Transformer prior~\cite{lee2022rqvae} (spatial and depth transformers, $4$ layers each, $8$ heads, $256$ dimensions) is trained over the frozen quantizer, from which $10{,}000$ samples are drawn.
+
+\paragraph{WordNet Encoder.} A fully-connected embedding network maps synsets to a $16$-dimensional vector, which is projected onto the manifold and quantized ($n_q=4$, $128$ codes). Recall@10 is evaluated using an autoregressive seq2seq model with beam search, predicting hypernym code tuples, trained for $10$ epochs on the frozen representations.
+
+\paragraph{Recommendation Residual Quantized Variational Autoencoders and Recommender.} The quantizer is instantiated as an Residual Quantized Variational Autoencoders~\cite{lee2022rqvae,hrqvae} featuring a $768\!\to\!512\!\to\!32$ MLP encoder and symmetric decoder ($n_q=4$, $128$ codes). The downstream recommender is an encoder-decoder Transformer (dimension $384$, $6$ layers, $6$ heads, feed-forward dimension $1024$, dropout $0.1$), generating semantic IDs autoregressively via beam search ($50$ beams, history length $20$).
+
+\paragraph{Audio Codec.} We utilize a SEANet convolutional architecture~\cite{soundstream,encodec} paired with a $12$-stage residual quantizer ($1024$ codes per stage). Training employs an adversarial objective incorporating multi-scale STFT, multi-period, and multi-scale waveform discriminators, alongside reconstruction and feature-matching losses. Adversarial training commences after $500$ steps.
+
+\section{Training and Hyperparameters}
+\label{sec:hparams}
+
+Hyperparameters were optimized strictly on the Euclidean baseline and subsequently frozen for all hyperbolic configurations to ensure a rigorous comparison. Base parameters are generally optimized using AdamW, while manifold parameters (codebooks) utilize Riemannian Adam (\texttt{geoopt}); the WordNet encoder is the exception, trained end-to-end with Riemannian SGD. To maintain stability near the manifold boundary, quantizer and manifold gradients are clipped (to $0.05$ and $0.02$, respectively) for the image and audio tasks. Curvature is uniformly set to $c=1$ for hyperbolic models and $c=0$ for the Euclidean baseline.
+
+The per-task training budgets, learning rates, and commitment weights are as follows. The image Vector-Quantized Variational Autoencoders trains for $50$ epochs with a base learning rate of $3\times10^{-4}$ (codebooks $10^{-4}$) and a commitment weight of $0.25$. The WordNet encoder trains for $50$ epochs with Riemannian SGD at a learning rate of $1.0$ and a commitment weight of $1.0$, after which the downstream seq2seq recall model trains for $10$ epochs. The recommendation Residual Quantized Variational Autoencoders trains for $5000$ epochs at a learning rate of $10^{-4}$, weighting reconstruction by $1000$ and commitment by $0.01$, and its downstream recommender trains for $100$ epochs at the same learning rate. The audio codec trains for $10$ epochs with a base learning rate of $3\times10^{-4}$ (codebooks $10^{-4}$) and a commitment weight of $0.25$.
+
+Image results are reported as the mean and standard deviation across three random seeds ($42, 43, 44$). Language, recommendation, audio, and image-generation metrics are reported for a single run.
+
+\section{Evaluation Metrics}
+\label{sec:metrics}
+
+Each configuration is evaluated on task-specific performance criteria and, where applicable, on the structural hierarchy of the learned latent space, recognizing that reconstruction fidelity and hierarchical organization are distinct objectives.
+
+\paragraph{Image.} Reconstruction fidelity is measured by the optimal validation mean squared error. Generative modeling performance is evaluated using Fr\'echet Inception Distance (FID, lower is better) and Inception Score (IS, higher is better), computed on $10{,}000$ samples using \texttt{torchmetrics}. Hierarchy recovery on CIFAR-100 is assessed by analyzing the mean code embeddings of the $100$ fine classes. We report sibling precision@4, and the Adjusted Rand Index (ARI), Normalized Mutual Information (NMI), and purity of an agglomerative clustering into $20$ groups. The cophenetic correlation compares the induced dendrogram to the ground-truth taxonomy (\texttt{scipy}/\texttt{scikit-learn}).
+
+\paragraph{Language.} Performance is evaluated via Recall@10 for hypernymy reconstruction on the closure split using beam search. Latent representation quality is further analyzed through code-tuple uniqueness (distinct sequences per concept) and intra-cluster semantic coherence. Coherence is quantified using WordNet path similarity, Wu--Palmer tree similarity, and cosine similarity of GloVe embeddings.
+
+\paragraph{Recommendation.} Sequential recommendation efficacy is measured via top-$k$ ranking on held-out items, reporting Recall@5/10 and NDCG@5/10. The pre-deduplication uniqueness ratio of generated semantic IDs is reported as a diagnostic measure of codebook utilization.
+
+\paragraph{Audio.} The primary evaluation metric is the optimal validation reconstruction loss. Codebook utilization is monitored via per-layer validation perplexity across all $12$ stages, with uniform perplexity near $1$ indicating codebook collapse. Perceptual rate-distortion is evaluated using PESQ, STOI, and SI-SDR metrics mapped against entropy-estimated bitrates.
+
+\section{Implementation and Tools}
+\label{sec:tools}
+
+All models are implemented using PyTorch. Core Poincar\'e-ball operations---including exponential and logarithmic maps, M\"obius addition, geodesic distance, gyration (utilizing the cancellation-free formulation detailed in Appendix~\ref{app:gyration}), and boundary projections---are implemented natively. The \texttt{geoopt} library provides manifold parameterization and the Riemannian Adam optimizer. NLTK is utilized for WordNet processing, and a pretrained MPNet sentence-transformer generates recommendation embeddings. Metrics are computed using \texttt{torchmetrics}, \texttt{scipy}, and \texttt{scikit-learn}. The audio codec uses a Distributed Data Parallel (DDP) training pipeline, though the reported configurations were trained on a single GPU, as were all other tasks. Experiments are executed via SLURM on the designated HPC infrastructure.
+
+\chapter{Results}
+\label{chap:experiments}
+
+We now put the three quantizer configurations of \S\ref{sec:configs}: the Euclidean baseline, the naive hyperbolic lift, and our Geometry-aware Hyperbolic Residual Quantization-VAE model to work on the four tasks of \S\ref{sec:tasks}. The first two are tasks on which hyperbolic residual quantization has \emph{already} been shown to pay off: prior work~\cite{hrqvae} establishes that curvature is the right prior whenever the data carries a latent hierarchy, and distinguishes \emph{hierarchy modeling} (supervised case) from \emph{hierarchy discovery} (unsupervised case). On these established tasks our question is whether Geometry-aware Hyperbolic Residual Quantization is a better choice than the naive hyperbolic lift, when choosing a residual quantization approach. The remaining two tasks are image reconstruction/generation (\S\ref{sec:exp_image}) and neural audio coding (\S\ref{sec:exp_audio}). To the best of our knowledge, we are the first to take hyperbolic residual quantization to a convolutional image tokenizer and to a deep ($N=12$) neural audio codec.
+
+\section{Established Hierarchy: WordNet Modeling and Recommendation Discovery}
+\label{sec:exp_nlp}
+\label{sec:exp_rec}
+
+We evaluate the proposed framework on two tasks exhibiting an intrinsic hierarchical structure: WordNet hypernymy modeling and recommendation discovery. Alongside the Euclidean baseline, naive hyperbolic lift, and Geometry-aware Hyperbolic Residual Quantization-VAE, we introduce a hybrid variant, \emph{Geometry-aware Hyperbolic Residual Quantization-VAE + RQ signal} (\S\ref{sec:abl_crosstask}). While the standard Geometry-aware Hyperbolic Residual Quantization-VAE routes a single transported gradient block-wise and discards the internal per-stage reconstruction signals, this hybrid variant reinstates them. This ablation is designed to empirically justify the exclusion of these intermediate gradients from our primary formulation.
+
+\begin{table}[h]
+\centering
+\caption{WordNet hypernymy reconstruction (Recall@10, closure split) across varying encoder dimensions ($d \in \{8, 16\}$) and per-stage codebook sizes ($b \in \{64, 128\}$). All other hyperparameters, including the number of quantization stages ($n_q=4$), are held constant. The hyperbolic formulations consistently outperform the Euclidean baseline across almost all capacity settings. The best performance for each configuration is highlighted in bold.}
+\label{tab:nlp_grid}
+\begin{tabular}{lcccc}
+\hline
+Configuration & $d8/b64$ & $d8/b128$ & $d16/b64$ & $d16/b128$ \\
+\hline
+Euclidean & $75.8$ & $75.4$ & $76.7$ & $75.9$ \\
+Naive hyperbolic (old) & $\mathbf{88.2}$ & $62.3$ & $\mathbf{86.9}$ & $83.4$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $81.9$ & $78.7$ & $83.8$ & $81.9$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE + RQ signal & $84.6$ & $\mathbf{81.0}$ & $84.6$ & $\mathbf{85.0}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{WordNet Hypernymy Modeling.}
+Table~\ref{tab:nlp_grid} reports the Recall@10 for hypernymy reconstruction across varying model capacities. While hyperbolic formulations consistently outperform the Euclidean baseline, the naive hyperbolic lift exhibits high instability. Although it achieves peak recall in specific configurations ($88.2\%$ at $d8/b64$), it collapses significantly in others ($62.3\%$ at $d8/b128$). Furthermore, its peak performance is artificially inflated by codebook collapse: Table~\ref{tab:nlp_repr} shows that the naive approach yields a low uniqueness ratio ($0.888$), meaning it assigns identical code sequences to disparate concepts, thereby trivially reducing the target space for the reconstructor. Conversely, Geometry-aware Hyperbolic Residual Quantization-VAE provides a stable optimization profile and maintains high codebook utilization (uniqueness $0.967$). 
+
+\begin{table}[h]
+\centering
+\caption{WordNet latent representation quality evaluated at the standard capacity setting ($d16/b128$) across all $82{,}115$ noun synsets. The uniqueness ratio denotes the proportion of distinct code sequences assigned per concept. The semantic similarity of concepts mapped to identical codes is evaluated using WordNet Path, Wu--Palmer tree similarity, and GloVe cosine similarity, with higher values indicating tighter clustering.}
+\label{tab:nlp_repr}
+\begin{tabular}{lcccc}
+\hline
+Configuration & uniq.\ ratio & path sim & wup sim & GloVe sim \\
+\hline
+Euclidean & $0.997$ & $0.123$ & $0.320$ & $0.336$ \\
+Naive hyperbolic (old) & $0.888$ & $0.078$ & $0.242$ & $0.097$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $0.967$ & $0.088$ & $0.262$ & $0.162$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Crucially, as shown in Table~\ref{tab:nlp_repr}, Geometry-aware Hyperbolic Residual Quantization-VAE clusters the vocabulary into substantially tighter, more semantically coherent groups, consistently outperforming the naive approach across Path, Wu--Palmer, and GloVe similarity metrics.
+
+\paragraph{Recommendation Hierarchy Discovery.}
+The recommendation task evaluates whether the improved hierarchical code space translates to downstream seq2seq generative recommendation (\S\ref{sec:tasks_rec}). As shown in Table~\ref{tab:rec_beauty}, both hyperbolic methods outperform the Euclidean baseline\footnote{The Euclidean baseline was run without deduplication tokens and at a smaller batch size; however, the performance gap is sufficiently large that this does not alter the general conclusions.}. 
+
+\begin{table}[h]
+\centering
+\caption{Downstream recommendation performance on the Amazon Beauty dataset. We report the test-set ranking metrics and the pre-deduplication uniqueness ratio (as a proxy for codebook health). Results show the mean $\pm$ standard deviation over 3 runs (2 runs for the hybrid variant). Geometry-aware Hyperbolic Residual Quantization-VAE utilizes the gradient correction (+gc) mechanism, though its effect at this depth ($n_q=4$) is negligible compared to the uncorrected variant. The best mean values per column are highlighted in bold.}
+\label{tab:rec_beauty}
+\begin{tabular}{lccccc}
+\hline
+Configuration & uniq.\ ratio & R@5 & NDCG@5 & R@10 & NDCG@10 \\
+\hline
+Euclidean & $0.960 \pm 0.024$ & $0.0352 \pm 0.0012$ & $0.0242 \pm 0.0006$ & $0.0530 \pm 0.0025$ & $0.0299 \pm 0.0010$ \\
+Naive hyperbolic (old) & $0.870 \pm 0.003$ & $0.0388 \pm 0.0004$ & $0.0259 \pm 0.0008$ & $\mathbf{0.0606 \pm 0.0013}$ & $0.0329 \pm 0.0010$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $0.971 \pm 0.001$ & $\mathbf{0.0393 \pm 0.0017}$ & $\mathbf{0.0264 \pm 0.0011}$ & $0.0604 \pm 0.0020$ & $\mathbf{0.0332 \pm 0.0012}$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE + RQ signal & $\mathbf{0.972 \pm 0.000}$ & $0.0370 \pm 0.0012$ & $0.0249 \pm 0.0013$ & $0.0579 \pm 0.0015$ & $0.0316 \pm 0.0005$ \\
+\hline
+\end{tabular}
+\end{table}
+
+Crucially, Geometry-aware Hyperbolic Residual Quantization-VAE resolves the codebook collapse plaguing the naive approach, increasing the uniqueness ratio from $0.870$ to $0.971$. This restored codebook health directly translates to superior recommendation quality, with Geometry-aware Hyperbolic Residual Quantization-VAE achieving the highest performance on the majority of ranking metrics. Given the shallow stack ($n_q=4$), the gradient correction (+gc) mechanism has a negligible impact here; the primary advantage of Geometry-aware Hyperbolic Residual Quantization-VAE in this setting is the restoration of codebook utilization.
+
+\paragraph{The Per-Stage Residual Signal.}
+The performance of the hybrid \emph{Geometry-aware Hyperbolic Residual Quantization-VAE + RQ signal} model reveals that the per-stage reconstruction gradient is highly task-dependent. In the WordNet task, it acts as a constructive signal, outperforming Geometry-aware Hyperbolic Residual Quantization-VAE in higher-capacity regimes (Table~\ref{tab:nlp_grid}). However, this benefit fails to generalize: in the recommendation task, despite maintaining high codebook uniqueness, the hybrid model's ranking metrics regress toward the Euclidean baseline (Table~\ref{tab:rec_beauty}). Furthermore, as demonstrated in \S\ref{sec:exp_audio}, this per-stage signal induces complete codebook collapse in deep architectures ($n_q=12$). These findings demonstrate that while intermediate residual signals can occasionally improve performance on shallow, task-specific objectives, they introduce severe systemic brittleness. By discarding them in favour of a single block-level gradient hop, Geometry-aware Hyperbolic Residual Quantization-VAE achieves a significantly more robust and scalable optimization dynamic across diverse domains.
+
+\section{Image Reconstruction, Hierarchy, and Generation}
+\label{sec:exp_image}
+
+The image domain provides a multi-faceted evaluation of the quantizer's capabilities by scoring the same trained codes across three distinct criteria: compression fidelity (reconstruction MSE), token quality for generative modeling (RQ-Transformer FID/IS), and unsupervised taxonomy discovery. To our knowledge, this represents the first application of hyperbolic residual quantization to a convolutional tokenizer. The hierarchy discovery evaluation follows the methodology of \S\ref{sec:exp_rec}, utilizing superclass labels that remain strictly unseen during training. Tables~\ref{tab:img_recon}--\ref{tab:img_gen} summarize the results across these three dimensions.
+
+\begin{table}[h]
+\centering
+\caption{Image reconstruction performance. We report the best validation reconstruction loss ($\times10^{-3}$, mean $\pm$ standard deviation over three random seeds). The Euclidean baseline achieves the lowest reconstruction error across both datasets.}
+\label{tab:img_recon}
+\begin{tabular}{lcc}
+\hline
+Configuration & MNIST & CIFAR-100 \\
+\hline
+Euclidean & $\mathbf{0.477 \pm 0.006}$ & $\mathbf{1.077 \pm 0.006}$ \\
+Naive hyperbolic & $0.600 \pm 0.020$ & $1.280 \pm 0.017$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $0.647 \pm 0.023$ & $1.360 \pm 0.046$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Unsupervised superclass hierarchy recovery on CIFAR-100 (mean $\pm$ standard deviation over three seeds). Superclass labels were excluded during training. Geometry-aware Hyperbolic Residual Quantization-VAE demonstrates superior global tree structure recovery across primary clustering metrics (ARI, NMI, and Purity).}
+\label{tab:img_hier}
+\begin{tabular}{lccc}
+\hline
+Configuration & ARI & NMI & purity \\
+\hline
+Euclidean & $0.048 \pm 0.005$ & $0.469 \pm 0.012$ & $0.327 \pm 0.006$ \\
+Naive hyperbolic & $0.055 \pm 0.003$ & $0.481 \pm 0.003$ & $0.337 \pm 0.006$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $\mathbf{0.087 \pm 0.008}$ & $\mathbf{0.515 \pm 0.013}$ & $\mathbf{0.370 \pm 0.010}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Image generation performance utilizing an autoregressive RQ-Transformer ($10{,}000$ samples, single seed). We report Fr\'echet Inception Distance (FID, lower is better) and Inception Score (IS, higher is better) in parentheses. Hyperbolic formulations outperform the Euclidean baseline on MNIST, whereas Euclidean quantization yields superior generation on CIFAR-100.}
+\label{tab:img_gen}
+\begin{tabular}{lcc}
+\hline
+Configuration & MNIST FID (IS) & CIFAR-100 FID (IS) \\
+\hline
+Euclidean & $20.36\ (2.069)$ & $\mathbf{94.67}\ (3.86)$ \\
+Naive hyperbolic & $\mathbf{15.01}\ (2.105)$ & $101.84\ (3.51)$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $16.78\ (2.068)$ & $98.23\ (3.80)$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Image Reconstruction.}
+Evaluated strictly as a compressor (Table~\ref{tab:img_recon}), the Euclidean baseline exhibits the lowest reconstruction error. Both hyperbolic configurations incur a $25$--$30\%$ relative MSE penalty, with Geometry-aware Hyperbolic Residual Quantization-VAE performing marginally behind the naive lift. This behavior is consistent with the theoretical analysis in \S\ref{sec:blockste}, which anticipates that the geometrically corrected estimator improves gradient transport and representation structure rather than optimizing raw continuous distortion.
+
+\paragraph{Hierarchy Recovery.}
+When assessing the structural organization of the code space (Table~\ref{tab:img_hier}), the performance ranking completely inverts. Geometry-aware Hyperbolic Residual Quantization-VAE significantly improves global clustering metrics on CIFAR-100, increasing the Adjusted Rand Index (ARI) from the Euclidean baseline's $0.048$ to $0.087$ ($+80\%$). It similarly leads in Normalized Mutual Information (NMI) and Purity. These results align closely with the hyperbolic hypothesis: for datasets possessing a latent taxonomy, operating on a manifold with constant negative curvature explicitly facilitates the discovery and embedding of hierarchical relationships.
+
+\paragraph{Image Generation.}
+The generative modeling performance (Table~\ref{tab:img_gen}) is notably dataset-dependent. On MNIST, both hyperbolic configurations achieve superior FID scores compared to the Euclidean baseline, indicating that hyperbolic codes can serve as more effective autoregressive tokens despite their higher reconstruction error. Conversely, on CIFAR-100, the Euclidean baseline yields the best FID, with Geometry-aware Hyperbolic Residual Quantization-VAE acting as the strongest hyperbolic alternative.
+
+\paragraph{Synthesis.}
+These results highlight a fundamental trade-off governed by the underlying geometry of the latent space: reconstruction fidelity, generative token quality, and hierarchical organization represent distinct, sometimes competing, objectives. The experimental evidence suggests that hyperbolic curvature inherently reallocates a fixed representational capacity away from raw signal reconstruction toward establishing a robust global taxonomy and, in specific regimes, improving next-token predictability for generative models.
+
+\section{Neural Audio Coding}
+\label{sec:exp_audio}
+
+Audio is the deep-stack task --- $n_q=12$ residual quantizers of $1024$ codes each --- and therefore the decisive test of the depth pathology of \S\ref{sec:firewall} and of whether the block-level estimator contains it. It is also, deliberately, the task with \emph{no} latent hierarchy to exploit, so it isolates the quantizer purely as a compressor. The hyperbolic codec requires the boundary controls of \S\ref{sec:tasks_audio} (a maximum code radius, the tangent-space projection to dimension $64$, the encoder-scale control, and \texttt{--uniform} quantizer-depth dropout); without \texttt{--uniform} \emph{every} hyperbolic run collapses, so it is a precondition rather than a tuned option.
+
+\begin{table}[h]
+\centering
+\caption{SoundStream 24\,kHz, $n_q=12$, codebook dimension $64$. Best validation reconstruction loss (lower is better); codebook health is the per-layer validation perplexity across the $12$ stages (collapse $=$ perplexity $\approx 1$). Naive hyperbolic has no healthy $10$-epoch checkpoint.}
+\label{tab:audio_d64}
+\begin{tabular}{lccc}
+\hline
+& \multicolumn{2}{c}{val.\ recon $\downarrow$} & \\
+Configuration & $3$ epochs & $10$ epochs & codebook health ($3$ ep) \\
+\hline
+Euclidean & $179.73$ & $\mathbf{117.63}$ & all $12$ alive, $625$--$871$ \\
+Naive hyperbolic & $211.99$ & --- & all alive (degraded) \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & $\mathbf{177.72}$ & $121.18$ & all $12$ alive, $101$--$513$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Audio dimension-sweep viability envelope (Geometry-aware Hyperbolic Residual Quantization-VAE, $3$ epochs, val.\ recon $\downarrow$). The gradient correction is \emph{required} at dimension $64$ but \emph{fatal} at dimensions $8$ and $128$ and at native dimension; Geometry-aware Hyperbolic Residual Quantization-VAE's viable envelope is $d32$--$d64$ only. $\boldsymbol{\times}$ marks codebook collapse.}
+\label{tab:audio_dim}
+\begin{tabular}{lccc}
+\hline
+dim & Euclidean & Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & Geometry-aware Hyperbolic Residual Quantization-VAE (no gc) \\
+\hline
+$8$   & $160.6$ & $265.9\ \boldsymbol{\times}$ & $263.3\ \boldsymbol{\times}$ \\
+$32$  & $157.1$ & $179.0$ & $183.0$ \\
+$64$  & $179.7$ & $\mathbf{177.7}$ & $264.7\ \boldsymbol{\times}$ \\
+$128$ & $159.7$ & $279.9\ \boldsymbol{\times}$ & $261.3\ \boldsymbol{\times}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{The depth pathology bites, and Geometry-aware Hyperbolic Residual Quantization-VAE contains it.} The naive lift is exactly where \S\ref{sec:firewall} predicts it will struggle: at $n_q=12$ it reconstructs at $211.99$, worse than Euclidean's $179.73$ and well behind Geometry-aware Hyperbolic Residual Quantization-VAE --- the accumulated leak of Eq.~\ref{eq:stack} has turned from signal into noise over twelve composed stages. Geometry-aware Hyperbolic Residual Quantization-VAE, which routes a single transported gradient to the encoder instead (Eq.~\ref{eq:hste_riemannian}), recovers a healthy codebook (all $12$ layers alive) and reaches $177.72$ at $3$ epochs --- marginally ahead of Euclidean and a full $34$ points ahead of naive. This is the clearest demonstration in the thesis that the block-level estimator is what makes the deep hyperbolic stack trainable at all: the difference between naive and Geometry-aware Hyperbolic Residual Quantization-VAE here is precisely the difference between the leaky per-stage routing of \S\ref{sec:firewall} and the single-hop routing of \S\ref{sec:blockste}.
+
+\paragraph{But hyperbolic is not a better compressor.} The advantage does not survive more training or more bottleneck width. At $10$ epochs Euclidean retakes the lead ($117.63$ vs Geometry-aware Hyperbolic Residual Quantization-VAE's $121.18$), and the dimension sweep (Table~\ref{tab:audio_dim}) shows Euclidean healthy at every width while Geometry-aware Hyperbolic Residual Quantization-VAE is viable only in a narrow $d32$--$d64$ envelope. The gradient correction is sharply non-monotone in dimension: required to keep $d64$ alive (without it, $d64$ collapses), yet fatal at $d8$, $d128$, and native dimension --- the same gc sign-flip seen across depth in the other tasks. Perceptual rate--distortion is flat for the hyperbolic codec (adding stages adds bits, not quality). On a task with no hierarchy to recover, the honest summary is that the hyperbolic codec's whole contribution is collapse-avoidance: Geometry-aware Hyperbolic Residual Quantization-VAE makes a deep curved stack \emph{trainable}, but trainability buys parity-at-best against a Euclidean codec that never had the problem in the first place.
+
+\section{Residual Reconstruction Error Across Tasks}
+\label{sec:exp_approx}
+
+The final experiment is a direct check of the geometric claim of \S\ref{sec:newmethod}: that the Hyperbolic Residual Aggregation ordering makes the residual cascade telescope, so the codes recompose to the encoder point on the ball, whereas the previous-work transliteration (Eq.~\ref{eq:prev_residual}) drifts. The diagnostic \texttt{--approx} flag logs the squared hyperbolic distance between the quantizer's aggregate-plus-leftover and the encoder output --- zero iff reconstruction is exact on the ball. It is defined only for the hyperbolic configurations (Euclidean has no ball). Table~\ref{tab:approx} collects it across tasks; the block hop leaves the forward value unchanged, so these numbers are properties of the residual aggregation, not of the gradient estimator.
+
+\begin{table}[h]
+\centering
+\caption{Mean validation residual on the ball (squared hyperbolic distance between the reconstructed code aggregate and the encoder output; lower is better, $0$ = exact). Naive uses the previous-work transliteration; Geometry-aware Hyperbolic Residual Quantization-VAE uses the Hyperbolic Residual Aggregation ordering. Recommendation is the Beauty category; audio is recomputed at fixed full depth $n_q=12$.}
+\label{tab:approx}
+\begin{tabular}{llccc}
+\hline
+Task & Cell & Naive hyperbolic & Geometry-aware Hyperbolic Residual Quantization-VAE (ours) & Geometry-aware Hyperbolic Residual Quantization-VAE (no gc) \\
+\hline
+Image  & MNIST            & $0.00049$ & $<\!10^{-5}$ & $<\!10^{-5}$ \\
+Image  & CIFAR-100        & $0.00133$ & $<\!10^{-5}$ & $<\!10^{-5}$ \\
+Rec    & Beauty           & $44.79$   & $0.031$ & $0.014$ \\
+Audio  & $d64$, $3$ ep    & $57.77$   & $0.145$ & $57.77^{\dagger}$ \\
+Audio  & $d64$, $10$ ep   & ---       & $0.026$ & --- \\
+NLP    & $d16/b128$       & $\sim\!14.4$ & $12.9$ & $8.9$ \\
+\hline
+\end{tabular}
+\end{table}
+
+{\small $^{\dagger}$The Geometry-aware Hyperbolic Residual Quantization-VAE (no gc) $d64/3$-ep cell is the collapsed run of Table~\ref{tab:audio_dim}: its reconstruction lands on the ball boundary, where the distance saturates at the same atanh-clamp ceiling ($\approx 57.77$) that any boundary-saturated model returns --- hence the exact match with naive, which is a collapse signature, not faithful reconstruction.}
+
+\paragraph{Reading.} The prediction of \S\ref{sec:newmethod} holds in every domain. The Hyperbolic Residual Aggregation aggregation reconstructs the encoder point on the ball almost exactly --- Geometry-aware Hyperbolic Residual Quantization-VAE's residual collapses toward zero, strikingly so in recommendation and audio ($0.01$--$0.15$ against naive's $45$--$58$) --- because the left-subtraction/reverse-nested pairing of Eq.~\ref{eq:hrq_residual} telescopes. The naive transliteration, by contrast, leaves a large residual: its per-stage M\"obius subtractions never invert the aggregation, so the cascade does not return the encoder point, exactly the mismatch analysed in \S\ref{sec:hrq}. NLP at $d16$ is the one regime where the two stay comparable ($\sim\!9$--$14$): at low curvature-scaled radius and shallow depth the gyration drift is small, as Figure~\ref{fig:residagg} anticipates. The two image cells are genuinely below $10^{-5}$, not missing data --- at the small radii reached on MNIST/CIFAR the telescoping is numerically exact.
+
+\section{Summary}
+\label{sec:exp_summary}
+
+Read across the four tasks, the three questions of the chapter introduction get clear answers. \emph{(1) Hyperbolic captures hierarchy --- supported.} On the two established tasks, where prior work~\cite{hrqvae} already shows curvature to help, our construction delivers its gains through the three failure modes it targets: hyperbolic owns the trainable WordNet hierarchy-modeling sweet spot by $8$--$12$ recall points (Table~\ref{tab:nlp_grid}), with Geometry-aware Hyperbolic Residual Quantization-VAE supplying the tighter, more coherent clusters (Table~\ref{tab:nlp_repr}), and on hierarchy-discovery recommendation Geometry-aware Hyperbolic Residual Quantization-VAE restores codebook health and converts it into a $+14\%$ recall lift (Table~\ref{tab:rec_beauty}). The two novel tasks confirm the same prediction: Geometry-aware Hyperbolic Residual Quantization-VAE lifts CIFAR-100 superclass ARI by $80\%$ (Table~\ref{tab:img_hier}) and on MNIST generation hyperbolic codes are better autoregressive tokens despite being worse reconstructions (Table~\ref{tab:img_gen}). \emph{(2) The block-level estimator earns its keep at depth --- supported.} The naive lift degrades exactly where \S\ref{sec:firewall} predicts, on the $n_q=12$ audio stack ($211.99$ vs Geometry-aware Hyperbolic Residual Quantization-VAE's $177.72$, Table~\ref{tab:audio_d64}), and Geometry-aware Hyperbolic Residual Quantization-VAE's single-hop routing is what keeps the deep curved codebook alive. \emph{(3) The Hyperbolic Residual Aggregation aggregation telescopes --- supported.} Its on-ball reconstruction residual collapses to near-zero in every domain while the previous-work convention leaves a large drift (Table~\ref{tab:approx}). The one hypothesis the data does \emph{not} support is hyperbolic-as-pure-compressor: Euclidean wins reconstruction on all three image datasets and at audio scale, and Geometry-aware Hyperbolic Residual Quantization-VAE's value on the hierarchy-free audio task reduces to collapse-avoidance. Geometry-aware Hyperbolic Residual Quantization-VAE's defensible claim is therefore robustness and trainability --- it stays in a tight performance band across regimes that swing the naive lift from collapse to its best cells, and it is the only hyperbolic configuration that survives the deep stack --- while several of the headline absolute wins (the WordNet sweet-spot peak, the MNIST generation FID) belong to the plain naive quantizer once its boundary is controlled.
+
+\chapter{Ablations}
+\label{ch:ablation}
+
+\section{Component ablation: Hyperbolic Residual Aggregation versus discounted Hyperbolic Straight-Through Estimator}
+\label{sec:abl_components}
+
+The headline configuration of this thesis, Geometry-aware Hyperbolic Residual Quantization-VAE, bundles two independent repairs of the naive hyperbolic lift: the \emph{Hyperbolic Residual Aggregation} (Hyperbolic Residual Aggregation) ordering of \S\ref{sec:residagg}, which fixes the \emph{forward} cascade so that the codes recompose to the encoder point, and the discounted hyperbolic straight-through estimator (discounted Hyperbolic Straight-Through Estimator) of \S\ref{sec:hste}, which fixes the \emph{backward} gradient that the cascade leaks. To see which of the two carries the method, we remove them one at a time on the shallow ($n_q=4$) Amazon Beauty recommendation stack, holding every other hyperparameter fixed and changing exactly one component:
+\begin{itemize}
+  \item \textbf{A1 (Hyperbolic Residual Aggregation, no discounted Hyperbolic Straight-Through Estimator):} the Hyperbolic Residual Aggregation forward ordering (\texttt{new\_method}) with the gradient estimator reverted to the identity Straight-Through Estimator --- the forward repair on its own. Reported here without the gradient correction, so that the only hyperbolic machinery active is the aggregation ordering.
+  \item \textbf{A2 (discounted Hyperbolic Straight-Through Estimator, no Hyperbolic Residual Aggregation):} the block-level discounted Hyperbolic Straight-Through Estimator (\texttt{block\_hste\_pt}, \texttt{hste\_riemannian}, \texttt{gradient\_correction}) applied on top of the \emph{naive} M\"obius aggregation of \S\ref{sec:hrq} --- the backward repair without the forward one.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Component ablation on Amazon Beauty (test set, $n_q=4$): one Geometry-aware Hyperbolic Residual Quantization component removed at a time from the Geometry-aware Hyperbolic Residual Quantization-VAE base. Ranking metrics and the pre-deduplication uniqueness ratio are higher-is-better; \emph{Residual Error} is the mean validation squared hyperbolic distance between the recomposed codes and the encoder output (lower is better, $0$ = exact on-ball reconstruction; undefined for the curvature-free Euclidean baseline). Best per column in bold.}
+\label{tab:abl_rec}
+\begin{tabular}{lcccccc}
+\hline
+Config & R@5 & N@5 & R@10 & N@10 & Uniq.\ & Residual Error \\
+\hline
+Geometry-aware Hyperbolic Residual Quantization-VAE (base)     & \textbf{0.0393} & \textbf{0.0267} & \textbf{0.0600} & \textbf{0.0334} & 0.971 & \textbf{0.04} \\
+A1: Hyperbolic Residual Aggregation, no discounted Hyperbolic Straight-Through Estimator   & 0.0367 & 0.0252 & 0.0566 & 0.0316 & 0.905 & $5.49$ \\
+A2: discounted Hyperbolic Straight-Through Estimator, no Hyperbolic Residual Aggregation   & 0.0379 & 0.0261 & 0.0580 & 0.0326 & \textbf{0.975} & $0.12$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Reading.} On this shallow stack both ablations stay close to the Geometry-aware Hyperbolic Residual Quantization-VAE base on the ranking metrics; the components separate on codebook health and on the residual error. A1 --- the forward repair alone --- is the weaker of the two: its uniqueness falls to $0.905$ (the lowest in the table) and every ranking metric dips below the base. A2 --- the backward repair alone --- holds at the base level and even posts the highest uniqueness in the table ($0.975$). At $n_q=4$, then, the gradient repair (discounted Hyperbolic Straight-Through Estimator) is the load-bearing component, while the Hyperbolic Residual Aggregation ordering contributes little on its own once it is stripped of the estimator. This is consistent with the shallow-depth story of \S\ref{sec:configs}: the deep-stack machinery has little to fix on a four-stage recommender, so the visible effect of the components here is codebook health rather than the depth pathology they were designed for.
+
+\paragraph{The surprising residual-error column.} The Residual Error column behaves in a way the construction of \S\ref{sec:residagg} does not, at first sight, predict. One would expect this number to track the aggregation \emph{ordering} --- Hyperbolic Residual Aggregation telescopes, naive drifts --- so that A1, which uses the Hyperbolic Residual Aggregation ordering, would carry the small residual and A2, built on the naive ordering, the large one. The table shows the opposite: A2 reaches $0.12$, within a small factor of the fully telescoping base ($0.04$) and two-and-a-half orders of magnitude below the $\sim\!45$ that the naive M\"obius aggregation it is built on produces on its own (Table~\ref{tab:approx}), whereas A1 sits at $5.49$. The measured residual is governed less by which ordering is used than by the code \emph{radius} the estimator drives the model toward. discounted Hyperbolic Straight-Through Estimator (with gc) shapes the gradient so the codes settle at small curvature-scaled radius, and in that regime two things collapse the on-ball error at once: M\"obius addition degenerates to ordinary Euclidean addition (the gyration factor tends to the identity as $c\|\cdot\|^2\!\to\!0$), so even the naive cascade telescopes approximately; and the quantization tightens, so the final leftover residual is itself small. A1, lacking discounted Hyperbolic Straight-Through Estimator, leaves the codes at larger radius, and its exact Hyperbolic Residual Aggregation ordering cannot compensate for the larger leftover residual, so the error stays an order of magnitude above A2. The striking drop in the discounted Hyperbolic Straight-Through Estimator arm is therefore real but \emph{indirect}: the backward estimator buys the forward telescoping for free by pulling the representation toward the near-flat centre of the ball --- a training-dynamics effect, not a forward-pass identity. Read this way, on a shallow stack the residual-error column is as much a readout of code radius as of aggregation ordering, and it is the gradient repair, not the Hyperbolic Residual Aggregation ordering, that minimizes it.
+
+\subsection{The same ablation on the image tasks}
+\label{sec:abl_components_img}
+
+To check that the recommendation reading is not an artifact of a single shallow task, we repeat the identical one-component-at-a-time ablation on the two image datasets, holding the $n_q=4$ image grid of \S\ref{sec:exp_image} fixed (codebook $128$ for MNIST, $512$ for CIFAR-100, seeds $42/43/44$) and changing exactly one component from the Geometry-aware Hyperbolic Residual Quantization-VAE base. A1 and A2 are defined precisely as above --- A1 is \texttt{new\_method} with the identity Straight-Through Estimator and no gradient correction (the forward repair alone), A2 is \texttt{block\_hste\_pt}\,+\,\texttt{hste\_riemannian}\,+\,\texttt{gradient\_correction} on the naive aggregation (the backward repair alone). The image task scores each trained code set three ways --- as a compressor (reconstruction MSE and on-ball residual error), as a generative tokenizer (RQ-Transformer FID/IS), and, on CIFAR-100, as an unsupervised taxonomy --- so the component ablation can be read against all three criteria of \S\ref{sec:exp_image}.
+
+\begin{table}[h]
+\centering
+\caption{Image component ablation --- reconstruction. Best validation reconstruction MSE ($\times10^{-3}$, lower is better) and the on-ball residual error ($\times10^{-3}$, lower is better; $0$ = exact telescoping, undefined for Euclidean), mean over seeds $42/43/44$. Best per column in bold.}
+\label{tab:abl_img_recon}
+\begin{tabular}{lcccc}
+\hline
+ & \multicolumn{2}{c}{Reconstruction MSE} & \multicolumn{2}{c}{Residual Error} \\
+Config & MNIST & CIFAR-100 & MNIST & CIFAR-100 \\
+\hline
+Euclidean            & $\mathbf{0.477}$ & $\mathbf{1.077}$ & --- & --- \\
+Naive hyp          & $0.600$ & $1.280$ & $0.49$ & $1.33$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (base)     & $0.647$ & $1.360$ & $\mathbf{0.00}$ & $\mathbf{0.00}$ \\
+A1: Hyperbolic Residual Aggregation, no discounted Hyperbolic Straight-Through Estimator   & $0.590$ & $1.270$ & $0.01$ & $0.03$ \\
+A2: discounted Hyperbolic Straight-Through Estimator, no Hyperbolic Residual Aggregation   & $0.640$ & $1.400$ & $0.02$ & $0.05$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Image component ablation --- generation. RQ-Transformer, $10{,}000$ samples, single seed: FID (lower is better) with Inception Score in parentheses (higher is better). Best FID per column in bold.}
+\label{tab:abl_img_gen}
+\begin{tabular}{lcc}
+\hline
+Config & MNIST FID (IS) & CIFAR-100 FID (IS) \\
+\hline
+Euclidean            & $20.36\ (2.069)$ & $\mathbf{94.67}\ (3.86)$ \\
+Naive hyp          & $\mathbf{15.01}\ (2.105)$ & $101.84\ (3.51)$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (base)     & $16.78\ (2.068)$ & $98.23\ (3.80)$ \\
+A1: Hyperbolic Residual Aggregation, no discounted Hyperbolic Straight-Through Estimator   & $17.53\ (2.095)$ & $95.40\ (3.82)$ \\
+A2: discounted Hyperbolic Straight-Through Estimator, no Hyperbolic Residual Aggregation   & $16.28\ (2.087)$ & $98.74\ (3.80)$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Image component ablation --- CIFAR-100 superclass hierarchy recovery (higher is better), mean\,$\pm$\,std over seeds $42/43/44$. No superclass labels are seen in training. Best per column in bold.}
+\label{tab:abl_img_hier}
+\begin{tabular}{lccc}
+\hline
+Config & ARI & NMI & purity \\
+\hline
+Euclidean            & $0.048 \pm 0.005$ & $0.469 \pm 0.012$ & $0.327 \pm 0.006$ \\
+Naive hyp          & $0.055 \pm 0.003$ & $0.481 \pm 0.003$ & $0.337 \pm 0.006$ \\
+Geometry-aware Hyperbolic Residual Quantization-VAE (base)     & $0.087 \pm 0.008$ & $\mathbf{0.515 \pm 0.013}$ & $\mathbf{0.370 \pm 0.010}$ \\
+A1: Hyperbolic Residual Aggregation, no discounted Hyperbolic Straight-Through Estimator   & $0.055 \pm 0.005$ & $0.485 \pm 0.002$ & $0.340 \pm 0.000$ \\
+A2: discounted Hyperbolic Straight-Through Estimator, no Hyperbolic Residual Aggregation   & $\mathbf{0.089 \pm 0.024}$ & $0.511 \pm 0.029$ & $\mathbf{0.370 \pm 0.022}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Reading --- the image ablation confirms the recommendation verdict.} The three image criteria line up the two components in the same way the recommender did, and the hierarchy table makes it sharpest. \emph{Reconstruction} (Table~\ref{tab:abl_img_recon}) tracks the \emph{backward} repair: A2, which carries discounted Hyperbolic Straight-Through Estimator, lands on the Geometry-aware Hyperbolic Residual Quantization-VAE base ($0.640$ vs $0.647$ on MNIST, $1.400$ vs $1.360$ on CIFAR), while A1, the forward repair alone, sits at the naive level ($0.590$ vs $0.600$; $1.270$ vs $1.280$) --- consistent with \S\ref{sec:blockste}, where the curved estimator is what trades a little distortion for gradient correctness, and the Hyperbolic Residual Aggregation ordering on its own does not. \emph{Hierarchy recovery} (Table~\ref{tab:abl_img_hier}) is the load-bearing result: A2 alone reproduces essentially all of the base's structural gain over naive --- ARI $0.089$ (vs base $0.087$, naive $0.055$) and purity $0.370$ (matching the base exactly) --- whereas A1 collapses back to the naive level on every clustering metric (ARI $0.055$, identical to naive). Just as on Amazon Beauty, then, \textbf{the gradient repair (discounted Hyperbolic Straight-Through Estimator), not the forward Hyperbolic Residual Aggregation ordering, is the component that converts curvature into recovered taxonomy} at this depth; A2's larger seed variance ($\pm0.024$ ARI) is the one caveat. \emph{Generation} (Table~\ref{tab:abl_img_gen}) separates the components least, as expected from the near-flat information-ceiling spread of \S\ref{sec:exp_image}: all five configurations fall within a few FID points, with A1 second-best on CIFAR ($95.40$, behind only Euclidean) and A2 second-best on MNIST ($16.28$, behind naive).
+
+\paragraph{Where the image residual departs from recommendation.} The one column that does \emph{not} transfer from the recommender is the on-ball residual. There (Table~\ref{tab:abl_rec}) the Hyperbolic Residual Aggregation arm A1 carried the \emph{large} residual and the discounted Hyperbolic Straight-Through Estimator arm A2 the small one --- the radius-driven inversion analysed above. On images both repaired arms telescope to near-zero ($\le 0.05\times10^{-3}$, against naive's $0.49$/$1.33$): the convolutional image encoder already places its codes at small curvature-scaled radius, so M\"obius addition is near-Euclidean for \emph{every} configuration and the naive cascade is the only one that drifts appreciably. On images, therefore, the residual-error column reads as a binary ``is any repair active'' flag rather than as a separator between the forward and backward repairs --- the same small-radius mechanism of the recommendation analysis, here pushed far enough that it washes out the A1/A2 distinction entirely. The structural separation between the two components survives this washout and shows up, cleanly, in the hierarchy metrics.
+
+\chapter{Conclusions}
+
+
+\appendix
+\chapter{Optional appendix}
+\chapter{Method Failures Analysis}
+\section{Forward failure: non-telescoping residual cascade}
+\label{sec:hrq}
+In Hyperbolic VQ the Euclidean distance used to match the continuous vector to the codebook centroids is replaced by the squared hyperbolic distance. Given a vector $x \in \mathbb{D}_c^D$ and a codebook $C \subset \mathbb{D}_c^D$, the nearest-neighbour assignment is
+\begin{equation}
+    q(x) = c_k, \quad \text{where } k = \operatorname{argmin}_j d_{\mathbb{D}_c}^2(x, c_j),
+\end{equation}
+so that assignment strictly follows the geodesics of the manifold. Lifting the residual recursion of Eq.~\ref{eq:bg_rvq_residual} to the manifold then appears, at first sight, to be a matter of transliteration: replace Euclidean subtraction with M\"obius subtraction and Euclidean summation with M\"obius addition while preserving the order of operations. This is exactly the convention adopted by the naive approach. Writing $r_0 = z_e$ for the (projected) encoder output, stage $i$ selects $q_i = q(r_{i-1})$ and forms the next residual by \emph{right} M\"obius subtraction, while the output reaggregates the codewords by left-associated M\"obius addition in coarse-to-fine order:
+\begin{equation}
+    \label{eq:prev_residual}
+    r_i = r_{i-1}\ominus_c q_i = r_{i-1}\oplus_c(-q_i),
+    \qquad
+    \hat z = \big(\cdots(q_1\oplus_c q_2)\oplus_c\cdots\big)\oplus_c q_{N} .
+\end{equation}
+These replace the Euclidean $r_i = r_{i-1}-q_i$ and $\hat z=\sum_i q_i$ of \S\ref{sec:bg_rvq} and keep every intermediate quantity on the ball.
+
+\paragraph{The residual mismatch.} This transliteration is faithful in Euclidean space but breaks on the ball. The purpose of the residual is to track the portion of the encoder point not yet captured by the running reconstruction $\hat z_i = \big(\cdots(q_1\oplus_c q_2)\cdots\big)\oplus_c q_i$ formed from the first $i$ codes; the genuine remaining error is the \emph{true residual}
+\begin{equation}
+    \label{eq:true_residual}
+    R_i^{\text{true}} := (-\hat z_i)\oplus_c z_e,
+    \qquad\text{so that}\qquad
+    \hat z_i \oplus_c R_i^{\text{true}} = z_e .
+\end{equation}
+In Euclidean Residual Vector Quantization the recursively tracked residual coincides with it, $r_i = z_e - \sum_{j\le i} q_j = R_i^{\text{true}}$, because addition is commutative and associative; the decomposition then telescopes exactly and $\hat z + r_{N} = z_e$. On the Poincar\'e ball neither property holds: right M\"obius subtraction is \emph{not} inverted by left-associated M\"obius addition, so the tracked residual $r_i$ of Eq.~\ref{eq:prev_residual} departs from the true residual $R_i^{\text{true}}$ of Eq.~\ref{eq:true_residual} by a gyration that the convention never accounts for, $r_i \neq R_i^{\text{true}}$. This mismatch is incurred at every stage and compounds with depth, so $\hat z\oplus_c r_{n_q}$ drifts away from $z_e$ even when every codeword is quantized without error. As a consequence, each codebook beyond the first is fitted to quantize a residual $r_i$ that no longer represents the actual reconstruction error $R_i^{\text{true}}$, and the deeper the stack the further the quantization target diverges from the quantity it is meant to encode.
+
+
+\section{Backward failures: wrong and cumulative gradient}
+\label{sec:firewall}
+
+\paragraph{Failure 1: the copied gradient is geometrically wrong.}
+The naive hyperbolic lift breaks the \emph{backward} pass in two independent ways, and the first is present already in a \emph{single} quantization step, before any stages are stacked. Because the nearest-neighbour assignment $q=q(z_e)$ is non-differentiable, the lift keeps the Identity Straight-Through Estimator (Eq.~\ref{eq:bg_ste}): its forward value $z_e+\operatorname{sg}[q-z_e]=q$ has identity Jacobian, so the decoder's gradient $g_q:=\partial L/\partial q$ is passed to the encoder verbatim, $\partial L/\partial z_e=g_q$. In flat space this copy is exact; on the ball it is not even type-correct. The gradient $g_q$ is a tangent vector \emph{at the code}, $g_q\in T_q\mathbb{D}_c^D$, whereas the encoder update must live \emph{at the encoder point}, in $T_{z_e}\mathbb{D}_c^D$: two distinct tangent spaces carrying distinct conformal factors ($\lambda^c_q\neq\lambda^c_{z_e}$ in general). The faithful transfer between them is not the identity but the parallel transport $P^c_{q\to z_e}$ along the connecting geodesic (Eq.~\ref{eq:bg_pt}), bracketed by the metric (de)conversions of Eq.~\ref{eq:bg_riemgrad}; carried across this way, $g_q$ is rescaled by $\lambda^c_{z_e}/\lambda^c_q$ and rotated by $\operatorname{gyr}[z_e,-q]$:
+\begin{equation}
+    \label{eq:failure1}
+    \underbrace{\frac{\partial L}{\partial z_e} = g_q}_{\text{identity Straight-Through Estimator copy}}
+    \qquad\neq\qquad
+    \underbrace{\frac{\lambda^c_{z_e}}{\lambda^c_q}\,\operatorname{gyr}[z_e,-q]\,g_q}_{\text{geometrically correct}} .
+\end{equation}
+The identity copy drops both corrections at once: the missing ratio $\lambda^c_{z_e}/\lambda^c_q$ corrupts the gradient's \emph{magnitude}, and, more importantly, the missing gyration corrupts its \emph{direction}. The encoder is pulled along a vector that is not the geodesic image of the decoder gradient, and this happens at all depths in the naive approach. The second failure is structural and subtler, so the rest of the section first sets up that recursion and the Euclidean gradient routing it ought to preserve, then shows precisely how the naive lift breaks it.
+
+\paragraph{The Residual Quantized Variational Autoencoders objective.}
+Writing $r_{i-1}$ for the residual entering stage $i$ (with $r_0=z_e$) and $q_i$ for the code it selects, the model minimises
+\begin{equation}
+    \label{eq:rqvae_loss}
+    \mathcal{L} = \underbrace{\lVert x - \hat x\rVert_2^2}_{\text{reconstruction}}
+    \;+\; \sum_{i=1}^{n_q}\Big(
+    \underbrace{d\big(\operatorname{sg}[r_{i-1}],\, q_i\big)^2}_{\text{codebook}}
+    \;+\; \beta\,\underbrace{d\big(r_{i-1},\, \operatorname{sg}[q_i]\big)^2}_{\text{commitment}}
+    \Big),
+\end{equation}
+where $\hat x = G(\hat z)$ is decoded from the aggregate code $\hat z = \sum_i q_i$, $\beta$ weights the commitment term, and $d(\cdot,\cdot)$ is a distance on the latent space: the Euclidean choice $d_{\mathbb{R}^D}(a,b)=\lVert a-b\rVert_2$ recovers the standard Residual Quantized Variational Autoencoders loss, while the geodesic distance of Eq.~\ref{eq:bg_distance} gives its hyperbolic counterpart. The reconstruction term reaches the encoder only through the chain of straight-through estimators; the per-stage codebook and commitment terms are the auxiliaries that train the dictionary and tie the encoder to it. Their stop-gradients separate their roles exactly: the codebook term, holding the residual fixed, moves \emph{only the codes}, whereas the commitment term, holding the code fixed, injects its gradient \emph{into the residual} $r_{i-1}$  (and hence back to the encoder). On the Poincar\'e ball $d$ is the geodesic distance and the residual subtraction and code sum become their M\"obius analogues (\S\ref{sec:residagg}), but these roles are unchanged.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{thesis/scheme.png}
+    \caption{Forward pass of the hyperbolic Residual Quantized Variational Autoencoders. The encoder $E$ produces a tangent vector that is mapped onto the Poincar\'e ball by $\exp_0^c$ to give the encoder point $z_e$ (the initial residual $r_0$). Inside the residual quantization module (RQM), each stage quantizes the current residual $r_{i-1}$ to a code $q_i$ and forms the next residual by M\"obius subtraction; the codes are recomposed by the aggregation operator (Agg, function of the chosen codes) into $\hat z$, which is mapped back to the tangent space by $\log_0^c$ and decoded by $G$. It is possible to reconstruct the gradient flow by following the arrows in reverse: the reconstruction gradient starts from the decoder and the commitment gradient is injected from each residual.}
+    \label{fig:rqvae_schematic}
+\end{figure}
+
+\paragraph{The gradient flow.}
+Failure~2 is exposed only by following the path the reconstruction signal actually takes back to the encoder. Figure~\ref{fig:rqvae_schematic} fixes the notation for the forward pass and shows that, with the identity Straight-Through Estimator in place, this signal can return to the encoder only through the residual branch traced below; the forward value $z_e+\operatorname{sg}[q(z_e)-z_e]=q(z_e)$ keeps every intermediate quantity on a codebook entry and never leaves the ball. To locate the leak we first ask why the flat case goes \emph{right}, since the hyperbolic pathology reads cleanest as the breakdown of exactly that mechanism.
+
+\paragraph{The Euclidean firewall.}
+Two signals travel back toward the encoder: the reconstruction gradient, routed through the codes and the residual branch, and the commitment gradient, injected at each residual $r_{i-1}$. The residual branch governs both. Combining the Straight-Through Estimator Jacobian $\partial q_i/\partial r_{i-1}=I$ (Eq.~\ref{eq:bg_ste}) with the additive update $r_i = r_{i-1}-q_i$ (Eq.~\ref{eq:bg_rvq_residual}), the Jacobian of the residual branch is
+\begin{equation}
+    \label{eq:firewall}
+    \frac{\partial r_i}{\partial r_{i-1}}
+    = \frac{\partial (r_{i-1} - q_i)}{\partial r_{i-1}}
+    = I - I = 0,
+\end{equation}
+so the residual branch transmits no gradient at all. We call this exact cancellation the residual gradient \emph{firewall}, and it filters both signals at once. The decoder produces a single gradient $g := \partial L_{\text{rec}}/\partial\hat z$ at the aggregate $\hat z=\sum_i q_i$; since $\hat z$ is the plain sum of the codes, every stage is handed the same $g$, yet the firewall cancels every residual-branch path except the shortest, whose empty product of residual Jacobians gives $\partial\hat z/\partial r_0 = I$. The encoder $r_0=z_e$ therefore receives \emph{exactly one} clean copy of $g$, independent of the depth $n_q$. The commitment terms are filtered identically: stage $i$'s term pulls $r_{i-1}$ toward $q_i$, but for $i>1$ the residual lies behind the firewall, so only the coarsest, $i=1$ term survives, while the codebook term by construction only ever trains the codes. This single depth-independent copy of the reconstruction gradient, together with the lone surviving commitment term, is what depth-stable training amounts to at the level of the gradient, and the concrete quantity we follow across the lift. The second failure below is precisely the loss of this routing once the residual subtraction is made hyperbolic.
+
+\paragraph{Failure 2: the firewall leaks, so gradients accumulate.}
+This failure surfaces only once the steps are stacked. The Euclidean firewall rested on the exact cancellation $\partial r_i/\partial r_{i-1}=I-I=0$ (Eq.~\ref{eq:firewall}). Differentiating the M\"obius residual through both arguments of $\oplus_c$ gives, for a quantizer with straight-through Jacobian $J_i := \partial q_i/\partial r_{i-1}$,
+\begin{equation}
+    \label{eq:leak}
+    \begin{aligned}
+    A_i := \frac{\partial r_i}{\partial r_{i-1}}
+    &= \frac{\partial\big(r_{i-1}\oplus_c(-q_i)\big)}{\partial r_{i-1}} \\
+    &= \underbrace{D_1\!\oplus_c(r_{i-1}, -q_i)}_{\text{direct path}}
+    \;-\; \underbrace{D_2\!\oplus_c(r_{i-1}, -q_i)\, J_i}_{\text{path through }q_i},
+    \end{aligned}
+\end{equation}
+where $D_1\!\oplus_c$ and $D_2\!\oplus_c$ denote the Jacobians of M\"obius addition in its first and second arguments. In Euclidean space $D_1=D_2=I$ and $J_i=I$, recovering $A_i=I-I=0$. On the ball the two terms no longer cancel: the differentials carry distinct conformal factors ($\lambda^c_{r_{i-1}}\neq\lambda^c_{q_i}$ in general), so even with the identity Straight-Through Estimator one has $A_i\neq 0$ --- the firewall leaks. Its consequence appears once the recursion is unrolled with $r_0=z_e$ and output $\hat z = \big(\cdots(q_1\oplus_c q_2)\oplus_c\cdots\big)\oplus_c q_{n_q}$ (it is important to state that we reach an analogous problem even if we use the Hyperbolic Residual Aggregation convention \ref{sec:newmethod}). Both signals of Eq.~\ref{eq:rqvae_loss} that the firewall used to gate now reach the encoder through the same leak products, the reconstruction gradient routed through the codes and the commitment gradient $\nabla_{r_{i-1}} L^{\text{commit}}_i$ injected at each residual:
+\begin{equation}
+    \label{eq:stack}
+    \nabla_{r_0}\mathcal{L}
+    = \underbrace{\sum_{i=1}^{N}\Big(\textstyle\prod_{j=1}^{i-1} A_j^{\top}\Big)
+    J_i^{\top}\,\nabla_{q_i} L_{\text{rec}}}_{\text{reconstruction, via the codes}}
+    \;+\; \underbrace{\sum_{i=1}^{N}\Big(\textstyle\prod_{j=1}^{i-1} A_j^{\top}\Big)
+    \nabla_{r_{i-1}} L^{\text{commit}}_i}_{\text{commitment, via the residuals}},
+\end{equation}
+with the empty product ($i=1$) equal to $I$. Every term contributes, and instead of those two clean copies the encoder collects a \emph{superposition} of reconstruction \emph{and} commitment contributions from all $N$ stages, each filtered through a different-length product of leak matrices: both gradients accumulate rather than cancel. The leak thus diverges as $N$ increases and $r_{i-1}$ approaches the boundary, exactly where the geometry is most expressive.
+
+\paragraph{Why the naive model still trains.}
+Neither failure stops the naive model from training. The reason the leaky estimator trains at all is that the accumulated superposition of Eq.~\ref{eq:stack} is genuinely informative. When only a handful of short leak products are ever composed, that superposition is a low-variance, meaningful descent direction: it is the residual-quantization signal of all $N$ codes routed back to the encoder at once, geometrically inexact yet pointing the right way on average. Cutting it measurably degrades performance; we substantiate this, and explore how the signal might be recovered, in Appendix~\ref{app:gc_leak}. The accumulation becomes a liability only as the stack deepens, when the long leak products turn from signal into noise.
+
+\paragraph{One backward repair.} Failures~1 and~2 are both backward-pass pathologies and, as \S\ref{sec:hste} shows, a single estimator repairs them together: the block-level discounted Hyperbolic Straight-Through Estimator (discounted Hyperbolic Straight-Through Estimator) developed there.
+
+
+
+
+\section{Numerically stable gyration in the HSTE backward pass}
+\label{app:gyration}
+The backward pass of the hyperbolic straight-through estimator (Eq.~\ref{eq:hste_backward}, and its block-level instance Eq.~\ref{eq:hste_riemannian}) hinges on a gyration $\operatorname{gyr}[z_e,-q]$ evaluated when its two base points are close, since $q$ is a quantization of $z_e$ (at the block level $\hat z\approx z_e$). This near-coincidence makes the closed-form gyration numerically delicate, so we evaluate it with the cancellation-free reformulation derived here, which is mathematically identical to the closed form but stays finite at the boundary, where the model is most expressive. Writing the closed-form gyration as $\operatorname{gyr}[A,B]\,v = v + 2\,(aA+bB)/d$ with $A=q$ and $B=-z_e$, the scalar coefficients and denominator are
 \begin{align}
     a &= -c^2\langle A,v\rangle\|B\|^2 + c\langle B,v\rangle + 2c^2\langle A,B\rangle\langle B,v\rangle,\notag\\
     b &= -c^2\langle B,v\rangle\|A\|^2 - c\langle A,v\rangle,\notag\\
@@ -369,207 +920,36 @@ a sum of small terms of comparable magnitude, and, using $aA+bB = \tfrac{a+b}{2}
     \label{eq:gyr_amb}
     a-b = c\,(1-c\|z_e\|^2)\,\langle\delta,v\rangle - c^2\langle z_e,v\rangle\,\|\delta\|^2 ,
 \end{equation}
-in which the offending $O(1)$ contributions cancel before evaluation rather than after; the combination $a+b$ is computed directly, as $a$ and $b$ share a sign. Equations~\ref{eq:gyr_d_stable}--\ref{eq:gyr_amb} leave the estimator mathematically identical to Eq.~\ref{eq:hste_backward} but keep it finite at the boundary, where the model is most expressive. This stabilization is necessary but, as the remainder of this section shows, not sufficient: it controls the error of a \emph{single} transport, while a stacked quantizer composes $N$ of them.
+in which the offending $O(1)$ contributions cancel before evaluation rather than after; the combination $a+b$ is computed directly, as $a$ and $b$ share a sign. Equations~\ref{eq:gyr_d_stable}--\ref{eq:gyr_amb} leave the estimator mathematically identical to Eq.~\ref{eq:hste_backward} but keep it finite at the boundary.
 
-Replacing the Euclidean STE with the geometrically exact HSTE removes one approximation but exposes a deeper structural problem in how gradients are routed through a residual stack. The remainder of this section analyzes that problem and the correction (\texttt{gradient\_correction}) that resolves it.
+\section{The leaked residual gradient is informative at shallow depth}
+\label{app:gc_leak}
+Failure~1 of \S\ref{sec:firewall} showed that the naive hyperbolic model violates the residual firewall: instead of one clean copy, the encoder collects the accumulated superposition of Eq.~\ref{eq:stack}, each stage filtered through a different-length product of leak matrices. The body treats this as a defect to repair. It is, however, only a defect once the stack is deep; at shallow depth the leaked signal is genuinely useful, and the gradient-correction option that removes it loses performance. This appendix substantiates both halves of that statement, and explains why we nevertheless do not adopt the leak in the deep regime.
 
-\subsection{The Euclidean firewall and its breakdown}
-\label{sec:firewall}
-Recall from \S\ref{sec:bg_rvq} the residual gradient \emph{firewall} of Euclidean RVQ: combining the identity STE Jacobian with $r_i = r_{i-1}-q_i$ gives $\partial r_i/\partial r_{i-1} = I - I = 0$ (Eq.~\ref{eq:bg_firewall}), so the residual branch transmits no gradient and the encoder receives exactly one clean copy of the reconstruction signal regardless of depth. We now show this cancellation is an artefact of flat geometry. Under the HSTE the quantizer Jacobian is the parallel transport $\partial q_i/\partial r_{i-1} = P^c_{q_i\to r_{i-1}}$, and the residual is the M\"obius update $r_i = (-q_i)\oplus_c r_{i-1}$ (Eq.~\ref{eq:hrq_residual}). Differentiating through both arguments of $\oplus_c$,
-\begin{equation}
-    \label{eq:leak}
-    A_i := \frac{\partial r_i}{\partial r_{i-1}}
-    = \underbrace{D_2\!\oplus_c(-q_i, r_{i-1})}_{\text{direct path}}
-    \;-\; \underbrace{D_1\!\oplus_c(-q_i, r_{i-1})\circ P^c_{q_i\to r_{i-1}}}_{\text{path through }q_i},
-\end{equation}
-where $D_1\!\oplus_c$ and $D_2\!\oplus_c$ denote the Jacobians of M\"obius addition in its first and second arguments. In Euclidean space $D_1=D_2=I$ and $P=I$, recovering $A_i = I-I = 0$. On the ball the two terms no longer match: the differentials carry distinct conformal factors ($\lambda^c_{r_{i-1}}\neq\lambda^c_{q_i}$ in general), and---decisively---the transport $P^c_{q_i\to r_{i-1}}$ applies a gyration that rotates the gradient, whereas the direct term does not. Subtracting a rotated vector from an unrotated one cannot vanish, so $A_i\neq 0$: the firewall leaks.
+\paragraph{Gradient correction removes exactly the leaked terms.}
+The \texttt{gradient\_correction} (gc) option detaches the residual immediately after each M\"obius update, $r_i\leftarrow\operatorname{sg}[r_i]$. In the implementation this is a single \texttt{.detach()} applied to the residual right after the subtraction $r_i=r_{i-1}\oplus_c(-q_i)$, inside every iteration of the residual loop. Its effect on Eq.~\ref{eq:stack} is exact and direct to trace: once $r_i$ is detached, the code $q_{i+1}=\operatorname{layer}(r_i)$ --- and, by induction, every code below it --- carries no gradient to the encoder, because its only attached input has been cut. The identity Straight-Through Estimator leaves the coarsest code $q_1=\operatorname{layer}(r_0)$ still attached to the encoder through $r_0=z_e$, so under gc the encoder receives \emph{only} the $i{=}1$ term of Eq.~\ref{eq:stack} --- the empty product, $J_1^{\top}\nabla_{q_1}L_{\text{rec}}=\nabla_{q_1}L_{\text{rec}}$ --- while every deeper term, precisely the ones carrying the leak products $\prod_{j<i}A_j$, is discarded. The gc ablation is therefore exactly ``turn the leak off,'' and the comparison naive vs.\ naive\,+\,gc isolates the leaked gradient's contribution. (We verified this against the code: the residual is detached after the M\"obius subtraction in both the \texttt{new\_method} and legacy residual loops, so no gradient path from $q_i$, $i\ge 2$, to the encoder survives.)
 
-\paragraph{Why the Euclidean STE hid the leak.}
-It is worth asking why this instability did not surface when the same hyperbolic model was trained with the ordinary Euclidean STE ($\partial q_i/\partial r_{i-1}=I$). Because $q_i\approx r_{i-1}$, the next residual lands near the origin, where the M\"obius differentials simplify to $D_1\!\oplus_c(z,-z)=D_2\!\oplus_c(z,-z)=\tfrac{\lambda^c_z}{2}I$. With the un-rotated identity Jacobian the two terms in Eq.~\ref{eq:leak} reduce to $\tfrac{\lambda^c_z}{2}I - \tfrac{\lambda^c_z}{2}I = 0$: the Euclidean STE \emph{accidentally} reproduces the firewall through a first-order cancellation near the origin. The exact HSTE forfeits this accident precisely because it is correct---its gyration rotates the gradient out of alignment, so the scalar factors can no longer cancel. The leak is thus the price of geometric fidelity, not a bug in the transport.
+\paragraph{Turning the leak off hurts at shallow depth.}
+On the WordNet hypernymy task --- a shallow $n_q=4$ stack --- keeping the leak is consistently better across the trainable capacity region. Table~\ref{tab:gc_leak} reproduces the relevant cells of the capacity grid (Recall@10, \%): in every $d{=}16$ cell, the model that keeps the leak (naive) beats the one that cuts it (\,+gc\,).
+\begin{table}[h]
+\centering
+\caption{WordNet Recall@10 (\%), shallow $n_q=4$ stack: keeping the leaked residual gradient (naive hyperbolic) versus removing it with gradient correction (\,+gc\,), across the trainable $d{=}16$ capacity region. Excerpt of the capacity grid; higher is better.}
+\label{tab:gc_leak}
+\begin{tabular}{lccc}
+\hline
+Method & $d16/b64$ & $d16/b128$ & $d16/b256$ \\
+\hline
+Naive hyperbolic       & \textbf{86.9} & \textbf{83.4} & \textbf{81.7} \\
+Naive hyperbolic + gc  & 83.5 & 82.3 & 80.5 \\
+\hline
+\end{tabular}
+\end{table}
+The same direction appears on the recommendation task (also $n_q=4$): plain naive hyperbolic stays competitive with the gradient-corrected block-hop variant, even leading it on R@10 (Table~\ref{tab:rec_beauty}). These shallow stacks are exactly the regimes in which prior hyperbolic residual-quantization work reported strong results: the leaked gradient, though geometrically inexact and a formal firewall violation, is a low-variance and informative supervisory signal when only a handful of leak matrices are ever composed.
 
-\subsection{Compounding across stacked transports}
-A single non-zero $A_i$ would be tolerable; the danger is that the leak is incurred once per stage and composed across the entire cascade. Unrolling $r_0=z_e$, $q_i=\mathrm{HSTE}(r_{i-1},c_i)$, $r_i=(-q_i)\oplus_c r_{i-1}$ with output $\hat z = q_1\oplus_c(\cdots\oplus_c q_N)$, the reconstruction gradient that reaches the encoder is
-\begin{equation}
-    \label{eq:stack}
-    \nabla_{r_0} L_{\text{rec}}
-    = \sum_{i=1}^{N}\Big(\textstyle\prod_{j=1}^{i-1} A_j\Big)^{\!\top}
-    \big(P^c_{q_i\to r_{i-1}}\big)^{\!\top}\,\nabla_{q_i} L_{\text{rec}},
-    \qquad \textstyle\prod_{j=1}^{i-1}A_j := A_{i-1}\cdots A_1,
-\end{equation}
-with the empty product ($i=1$) equal to $I$. The gradient of the $i$-th quantizer must traverse a chain of $i-1$ leak Jacobians before reaching the encoder. Two limits bound the behaviour: with the firewall intact ($A_j=0$) every term with $i\geq 2$ vanishes and the encoder receives the single clean gradient $\big(P^c_{q_1\to z_e}\big)^{\top}\nabla_{q_1}L_{\text{rec}}$, exactly as in Euclidean RVQ; with $A_j\neq 0$ all $N$ terms survive, each filtered through a different-length product of leak matrices.
+\paragraph{Why it fails as the stack deepens.}
+The benefit does not survive depth. The contribution of code $i$ in Eq.~\ref{eq:stack} is filtered through the product $\prod_{j=1}^{i-1}A_j$ of $i-1$ leak matrices, so the finest, lowest-level codes ride the \emph{longest} products. Near the boundary each $\|A_j\|$ is of order one and swings sharply from step to step (\S\ref{sec:firewall}); these long products therefore fluctuate violently, and their variance grows with depth, so the deep-code terms come to dominate the sum with noise rather than signal. At the depth of the audio codec ($n_q=12$) this is decisive: naive hyperbolic reaches only $211.99$ validation reconstruction, against $179.73$ for the Euclidean baseline and $177.72$ for the gradient-corrected hyperbolic model --- the uncorrected leak prevents the deep codec from converging to a competitive solution.
 
-\subsection{Spectral radius and the conformal amplifier}
-Taking norms in Eq.~\ref{eq:stack} with $\rho := \max_j\|A_j\|$ and representative transport and gradient scales $\tau$, $g$,
-\begin{equation}
-    \label{eq:spectral}
-    \|\nabla_{r_0}L_{\text{rec}}\|
-    \;\lesssim\; \tau g\sum_{i=1}^{N}\rho^{\,i-1}
-    \;=\; \tau g\,\frac{\rho^{N}-1}{\rho-1},
-\end{equation}
-so depth $N$ enters as an exponent and the spectral radius of the leak matrices decides the regime: for $\rho>1$ the deep quantizers deliver exponentially amplified gradients (\emph{explosion}); for $\rho<1$ they are exponentially attenuated, so the encoder effectively sees only the first few stages (a \emph{vanishing-horizon} effect, present even without a firewall); $\rho=1$ is a non-generic knife edge. Crucially $\rho$ is not $O(1)$. Tracing the HSTE backward (Eq.~\ref{eq:hste_backward}), the net transport scales with the conformal ratio $\lambda^c_{r_{i-1}}/\lambda^c_{q_i}$, and the M\"obius differentials contribute further factors $\lambda^c_{r_{i-1}}/\lambda^c_0$. As any base point migrates toward the boundary, $\|z\|^2\to 1/c$ and $\lambda^c_z\to\infty$, so both $\tau$ and $\rho$ diverge. The cascade thus contains a built-in amplifier that is strongest exactly where the geometry is most expressive (near the boundary) and where the quantization error is largest (early training)---the same regime that made the bare gyration of \S\ref{sec:hste} numerically unstable. The two failure modes are moreover multiplicative: writing the realized backward map as $\widehat{P}=P+E$ for the residual clamping and finite-precision error $E$, the stacked product $\prod_j(A_j+E_j)$ amplifies $E$ by the very products $\prod_j A_j$ that already drive the explosion. Improving the exactness of a single transport---as the stable gyration of \S\ref{sec:hste} does---therefore cannot tame a product whose spectral radius exceeds one.
-
-\subsection{Restoring the firewall: the gradient-routing correction}
-\label{sec:gradcorr}
-The analysis isolates a single decisive quantity---the spectral radius of the leak matrices $A_j$---and a single structural cause: the non-zero $\partial r_i/\partial r_{i-1}$ that the curved geometry produces. We remove it directly. By applying the stop-gradient to the residual after each stage, $r_i \leftarrow \operatorname{sg}[r_i]$ (the \texttt{gradient\_correction} option), we force $A_j := 0$ by construction, truncating the sum in Eq.~\ref{eq:stack} to its $i=1$ term:
-\begin{equation}
-    \nabla_{z_e} L_{\text{rec}} = \big(P^c_{q_1\to z_e}\big)^{\top}\,\nabla_{q_1}L_{\text{rec}} .
-\end{equation}
-This is the exact hyperbolic analogue of the Euclidean firewall (Eq.~\ref{eq:bg_firewall}): the encoder again receives a single, holistic Riemannian gradient---holistic because $\hat z$, and hence $\nabla_{q_1}L_{\text{rec}}$, already depends on every deeper code---transported once from $q_1$. The stop-gradient does not starve the deeper codebooks: each $q_i$ still receives its reconstruction gradient directly through $\partial\hat z/\partial q_i$, and the per-stage codebook and commitment losses (\S\ref{sec:hyp_objectives}) attach to $q_i$ and $r_{i-1}$ with their own stop-gradients, so the deep dictionaries continue to train while their gradients stop at the firewall instead of leaking back to the encoder. Setting $A_j=0$ simultaneously removes all three failure modes identified above: the spectral growth, the boundary conformal amplification, and the multiplicative compounding of transport error.
-
-\paragraph{Applicability to standard VQ-VAEs.}
-The correction is geometry-agnostic. In Euclidean RVQ the firewall holds automatically only because the STE Jacobian and the residual Jacobian are both the identity; the moment that exact $I-I$ cancellation is perturbed---by a non-identity straight-through map, a normalized or otherwise transformed residual, or a learned projection between stages---the same leakage of Eq.~\ref{eq:stack} reappears, now with a Euclidean rather than gyrational mismatch. Applying the stop-gradient to the residual restores the clean single-gradient routing in those settings exactly as it does here, at no cost in the unperturbed case, where it is a no-op in exact arithmetic. The gradient-routing correction is thus a drop-in stabilizer for any residual quantizer, hyperbolic or not, that makes the encoder's gradient exact by construction rather than reliant on an accidental cancellation.
-
-\section{The Riemannian Hyperbolic Straight-Through Estimator}
-\label{sec:hste_riemannian}
-
-While the gradient-routing correction (\texttt{gradient\_correction}) of \S\ref{sec:gradcorr} directly restores the residual firewall by truncating the backward pass, an alternative approach is to address the source of the boundary amplification itself. As established in \S\ref{sec:firewall}, the gradient explosion in a deep hyperbolic residual quantizer is driven by two factors: the rotational mismatch that breaks the firewall, and the conformal amplifier $(\lambda^c_{z_e})^2$ introduced when converting the transported Riemannian gradient back to a Euclidean gradient for the encoder (Eq.~\ref{eq:hste_backward}).
-
-The \emph{Riemannian Hyperbolic Straight-Through Estimator} (\texttt{hste\_riemannian}) addresses this problem by fundamentally changing the contract between the quantizer and the encoder. Instead of returning a Euclidean gradient, the quantizer returns the Riemannian gradient directly.
-
-\paragraph{The Problem with Euclidean Conversion.}
-In the standard HSTE of \S\ref{sec:hste}, the three-step backward pass requires multiplying by $(\lambda^c_{z_e})^2$ in its final step to yield a valid Euclidean gradient. As the encoder embeddings $z_e$ migrate towards the boundary of the Poincar\'e ball, $c\|z_e\|^2 \to 1$ and the conformal factor $\lambda^c_{z_e}$ diverges to infinity. This scalar amplification multiplies not just the primary reconstruction gradient, but also the accumulated error from the leaky residual branches (the leak matrices $A_j$). The result is that deep codebooks deliver catastrophically large gradients to the encoder, destabilizing training. Section \ref{sec:hste} solves this by forcefully severing the residual branch ($A_j=0$), discarding the leaked gradients entirely.
-
-\paragraph{The Riemannian Solution.}
-The \texttt{hste\_riemannian} method takes a different path. If the encoder is updated using a Riemannian optimizer (such as Riemannian Adam) rather than a standard Euclidean optimizer, there is no need to convert the gradient back to the Euclidean tangent space at the end of the backward pass. The estimator therefore omits step (iii) of the standard HSTE, returning the Riemannian gradient directly:
-\begin{equation}
-    \label{eq:hste_riemannian}
-    \nabla^R_{z_e} L_{\text{rec}} = P^c_{q\to z_e}\!\Big(\tfrac{1}{(\lambda^c_q)^2}\,\nabla^E_q L_{\text{rec}}\Big).
-\end{equation}
-This formulation cancels the diverging $(\lambda^c_{z_e})^2$ factor at the source. How does this differ from the solution in \S\ref{sec:gradcorr}? The gradient-routing correction relies on an explicit stop-gradient to enforce a strict firewall, completely blocking gradient flow through the residual connections. In contrast, the \texttt{hste\_riemannian} method allows the firewall to leak, but removes the conformal amplifier that causes the spectral radius of the leak matrices to explode. By keeping the gradient in its Riemannian form, the scalar magnitude remains stable even near the boundary. The encoder thus receives a superposition of gradients from all stages, gracefully managed by the natural geometry of the manifold, without suffering from numerical explosion. This provides an elegant, geometry-native alternative to the hard truncation of the stop-gradient.
-
-\section{Residual Aggregation}
-\label{sec:residagg}
-Having fixed the gradient that the quantizer delivers to the encoder, we now turn to the residual recursion itself: how the encoder point is decomposed into a coarse-to-fine sequence of codes on the ball, and which M\"obius pairing of residual and aggregation keeps that decomposition exact.
-
-\subsection{Hyperbolic Distance and Quantization}
-\label{sec:hrq}
-In Hyperbolic VQ, the Euclidean distance used to match the continuous vector to the codebook centroids is replaced by the squared hyperbolic distance metric. Given a vector $x \in \mathbb{D}_c^D$ and a codebook $C \subset \mathbb{D}_c^D$, the nearest neighbor assignment is computed as:
-\begin{equation}
-    q(x) = c_k, \quad \text{where } k = \operatorname{argmin}_j d_{\mathbb{D}_c}^2(x, c_j)
-\end{equation}
-This formulation ensures that the assignment process strictly follows the geodesics of the hyperbolic manifold.
-
-Lifting the residual recursion of Eq.~\ref{eq:bg_rvq_residual} to the manifold appears, at first sight, to be a matter of transliteration: replace Euclidean subtraction with M\"obius subtraction and Euclidean summation with M\"obius addition while preserving the order of operations. This is the convention adopted by prior hyperbolic residual quantizers such as HRQ \cite{hrqvae}. Writing $r_0 = z_e$ for the (projected) encoder output, stage $i$ selects $q_i = q(r_{i-1})$ and forms the next residual by \emph{right} M\"obius subtraction, while the output reaggregates the codewords by left-associated M\"obius addition in coarse-to-fine order:
-\begin{equation}
-    \label{eq:prev_residual}
-    r_i = r_{i-1}\ominus_c q_i = r_{i-1}\oplus_c(-q_i),
-    \qquad
-    \hat z = \big(\cdots(q_1\oplus_c q_2)\oplus_c\cdots\big)\oplus_c q_N .
-\end{equation}
-These replace the Euclidean $r_i = r_{i-1}-q_i$ and $\hat z=\sum_i q_i$ of \S\ref{sec:bg_rvq} and keep every intermediate quantity on the ball; every M\"obius output is clipped back into the open ball by a projection $\operatorname{proj}_c$ (a rescaling to radius $(1-\epsilon)/\sqrt{c}$) to maintain numerical validity.
-
-\paragraph{The residual mismatch.} This transliteration is faithful in Euclidean space but breaks on the ball. The purpose of the residual is to track the portion of the encoder point not yet captured by the running reconstruction $\hat z_i = \big(\cdots(q_1\oplus_c q_2)\cdots\big)\oplus_c q_i$ formed from the first $i$ codes; the genuine remaining error is the \emph{true residual}
-\begin{equation}
-    \label{eq:true_residual}
-    R_i^{\text{true}} := (-\hat z_i)\oplus_c z_e,
-    \qquad\text{so that}\qquad
-    \hat z_i \oplus_c R_i^{\text{true}} = z_e .
-\end{equation}
-In Euclidean RVQ the recursively tracked residual coincides with it, $r_i = z_e - \sum_{j\le i} q_j = R_i^{\text{true}}$, because addition is commutative and associative; the decomposition then telescopes exactly and $\hat z + r_D = z_e$. On the Poincar\'e ball neither property holds: right M\"obius subtraction is \emph{not} inverted by left-associated M\"obius addition, so the tracked residual $r_i$ of Eq.~\ref{eq:prev_residual} departs from the true residual $R_i^{\text{true}}$ of Eq.~\ref{eq:true_residual} by a gyration that the convention never accounts for, $r_i \neq R_i^{\text{true}}$. This mismatch is not a transient numerical artefact: it is incurred at every stage and compounds with depth, so $\hat z\oplus_c r_D$ drifts away from $z_e$ even when every codeword is quantized without error. As a consequence, each codebook beyond the first is fitted to quantize a residual $r_i$ that no longer represents the actual reconstruction error $R_i^{\text{true}}$, and the deeper the stack the further the quantization target diverges from the quantity it is meant to encode. This silently erodes the coarse-to-fine hierarchy that motivates residual quantization in the first place. Resolving the mismatch---choosing the unique pairing of M\"obius residual and aggregation for which $r_i = R_i^{\text{true}}$ and the cascade telescopes exactly---is the subject of \S\ref{sec:newmethod}.
-
-\subsection{The \texttt{new\_method} Convention}
-\label{sec:newmethod}
-It remains to justify the specific ordering of the M\"obius residual and aggregation that the \texttt{new\_method} option selects, and that the firewall analysis of \S\ref{sec:firewall} already assumed (Eq.~\ref{eq:hrq_residual} below). In Euclidean RVQ the residual update $r_i = r_{i-1}-q_i$ and the sum $\hat z=\sum_i q_i$ are mutually inverse for free: addition is commutative and associative, so the order in which codewords are removed and re-added is irrelevant and $\hat z + r_N = z_e$ holds exactly. On the Poincar\'e ball neither property holds, and the naive transliteration of \S\ref{sec:hrq} (Eq.~\ref{eq:prev_residual}) breaks the telescoping that makes residual quantization a faithful coarse-to-fine decomposition, so that the tracked residual no longer equals the true residual $R_i^{\text{true}}$ of Eq.~\ref{eq:true_residual}.
-
-The requirement is that aggregation invert the residual recursion, so that reconstructing from the codes returns the encoder point up to the final residual. The gyrogroup left-cancellation law,
-\begin{equation}
-    \label{eq:left_cancel}
-    a \oplus_c\big((-a)\oplus_c b\big) = b,
-\end{equation}
-makes the correct pairing explicit. Defining the residual by \emph{left} M\"obius subtraction and reconstructing by reverse-nested aggregation,
-\begin{equation}
-    \label{eq:hrq_residual}
-    r_i = (-q_i)\oplus_c r_{i-1},
-    \qquad
-    \hat z = q_1\oplus_c\big(q_2\oplus_c(\cdots\oplus_c q_N)\big),
-\end{equation}
-restores the exact inverse pair that the previous-work convention of Eq.~\ref{eq:prev_residual} lacks. The first stage gives $r_1 = (-q_1)\oplus_c z_e$, which Eq.~\ref{eq:left_cancel} inverts as $q_1\oplus_c r_1 = z_e$. Applying this telescopically, the full reconstruction $q_1\oplus_c\big(q_2\oplus_c(\cdots\oplus_c(q_N\oplus_c r_N))\big)$ recovers $z_e$ exactly; dropping the unquantized tail $r_N$ yields the reconstruction $\hat z$ above. With this pairing the tracked residual equals the true residual at every stage, $r_i = R_i^{\text{true}}$ (Eq.~\ref{eq:true_residual}), so the mismatch identified in \S\ref{sec:hrq} vanishes. The ordering is therefore not a free choice: left subtraction must be paired with this particular reverse-nested aggregation for the codes to compose back into the encoder point.
-
-The alternative conventions fail for the same reason that would make them equivalent in Euclidean space. Right subtraction $r_i = r_{i-1}\oplus_c(-q_i)$ is \emph{not} inverted by left re-addition, because $\oplus_c$ is non-commutative; and aggregating the codes in forward (coarse-to-fine) rather than reverse order misplaces the gyration factors introduced by non-associativity. In both cases the reconstructed $\hat z$ drifts from $z_e$ by a gyration-dependent residual that grows with depth, degrading reconstruction and, through Eq.~\ref{eq:leak}, perturbing the very Jacobians whose spectral radius governs the firewall. The \texttt{new\_method} ordering is the choice that keeps the hyperbolic residual cascade an exact inverse pair, and is assumed throughout the remainder of this thesis.
-
-\chapter{Experiments}
-
-
-
-\chapter{Conclusions}
-
-
-\appendix
-\chapter{Detailed Analysis of Gradient Leakage}
-\label{app:gradient_leakage}
-
-This appendix provides a rigorous analysis of gradient routing through a Residual Vector Quantizer. We trace how the gradients originating from the three primary loss components---reconstruction, commitment, and codebook losses---flow backwards to the encoder output $z_e$. We compare the behaviour across three regimes: the standard Euclidean Straight-Through Estimator (STE), the standard Hyperbolic STE (HSTE), and the Riemannian HSTE (\texttt{hste\_riemannian}).
-
-For clarity, we define the forward cascade as follows:
-\begin{align}
-    r_0 &= z_e \quad \text{(Encoder output)}\notag\\
-    q_i &= \operatorname{quantize}(r_{i-1})\notag\\
-    r_i &= \operatorname{residual}(r_{i-1}, q_i)\notag\\
-    \hat{z} &= \operatorname{aggregate}(q_1, \dots, q_N)
-\end{align}
-The loss function comprises three terms:
-\begin{equation}
-    \mathcal{L} = \mathcal{L}_{\text{rec}}(\hat{z}) + \sum_{i=1}^N \mathcal{L}_{\text{com}}^{(i)}(r_{i-1}, \operatorname{sg}[q_i]) + \sum_{i=1}^N \mathcal{L}_{\text{cb}}^{(i)}(\operatorname{sg}[r_{i-1}], q_i)
-\end{equation}
-where $\operatorname{sg}[\cdot]$ denotes the stop-gradient operator. We now analyze the gradient $\nabla_{z_e} \mathcal{L}$ for each regime.
-
-\section{Euclidean STE}
-In Euclidean space, operations are linear. The residual update is $r_i = r_{i-1} - q_i$, and the aggregation is $\hat{z} = \sum_{i=1}^N q_i$. The Euclidean STE copies gradients directly: $\frac{\partial q_i}{\partial r_{i-1}} = I$. 
-Crucially, the Jacobian of the residual branch is perfectly zero:
-\begin{equation}
-    A_i^{\text{Euc}} := \frac{\partial r_i}{\partial r_{i-1}} = \frac{\partial (r_{i-1} - q_i)}{\partial r_{i-1}} = I - I = 0.
-\end{equation}
-
-\paragraph{Codebook Loss.} By definition, the codebook loss relies on $\operatorname{sg}[r_{i-1}]$. Because of the stop-gradient, $\nabla_{z_e} \mathcal{L}_{\text{cb}} = 0$. It only updates the codebook centroids.
-
-\paragraph{Commitment Loss.} The commitment loss for stage $i$ provides a gradient with respect to $r_{i-1}$. To reach the encoder $z_e$, this gradient must pass through the chain of residual Jacobians: $\frac{\partial r_{i-1}}{\partial z_e} = \prod_{j=1}^{i-1} A_j^{\text{Euc}}$. Because $A_j^{\text{Euc}} = 0$, this product is zero for all $i > 1$. Consequently, the encoder \emph{only} receives the commitment loss from the first stage:
-\begin{equation}
-    \nabla_{z_e} \mathcal{L}_{\text{com}} = \nabla_{r_0} \mathcal{L}_{\text{com}}^{(1)}.
-\end{equation}
-Unlike the reconstruction loss, the stage-wise commitment losses are local to their specific residuals. Because the firewall blocks them, the encoder is completely blind to the commitment constraints of deeper stages. (Note: This is why many Euclidean RVQ implementations opt for a global commitment loss $\mathcal{L}_{\text{com}} = \|z_e - \operatorname{sg}[\hat{z}]\|^2$ rather than a sum of stage-wise losses, as the stage-wise formulation renders the deep commitment computations functionally disconnected from the encoder).
-
-\paragraph{Reconstruction Loss.} The final reconstruction is the sum of all codes: $\hat{z} = \sum_{i=1}^N q_i$. Because it is a simple sum, the gradient of the loss with respect to \emph{any} individual codebook is identical: $\nabla_{q_i} \mathcal{L}_{\text{rec}} = \nabla_{\hat{z}} \mathcal{L}_{\text{rec}}$. The reconstruction gradient backpropagates from $\hat{z}$ to each $q_i$, then flows to $r_{i-1}$, and attempts to traverse the residual connections back to $z_e$. For stage $i$, the path to $z_e$ contains the product $\prod_{j=1}^{i-1} A_j^{\text{Euc}}$, which vanishes for $i > 1$. Therefore, only the gradient from $q_1$ reaches the encoder:
-\begin{equation}
-    \nabla_{z_e} \mathcal{L}_{\text{rec}} = \nabla_{q_1} \mathcal{L}_{\text{rec}} = \nabla_{\hat{z}} \mathcal{L}_{\text{rec}}.
-\end{equation}
-This is the Euclidean ``firewall'': the encoder receives a single clean gradient from the first branch. However, because $\nabla_{q_1} \mathcal{L}_{\text{rec}}$ is evaluated on the fully aggregated output $\hat{z}$, this single gradient is ``holistic''. It already contains the fine-grained feedback from all deeper stages. The firewall simply prevents the encoder from receiving $N$ duplicate copies of the same reconstruction gradient.
-
-\section{Hyperbolic STE (HSTE)}
-On the Poincar\'e ball, we use M\"obius operations: $r_i = (-q_i) \oplus_c r_{i-1}$. The Jacobian of the quantization step is the parallel transport $P_{q_i \to r_{i-1}}^c$. Because parallel transport involves a gyration (rotation) and M\"obius addition is non-commutative, the exact cancellation breaks down:
-\begin{equation}
-    A_i^{\text{Hyp}} := \frac{\partial r_i}{\partial r_{i-1}} \neq 0.
-\end{equation}
-Furthermore, the backward pass to Euclidean space requires multiplying by the conformal factor $(\lambda_{z_e}^c)^2$.
-
-\paragraph{Codebook Loss.} As in the Euclidean case, the stop-gradient on $r_{i-1}$ prevents the codebook loss from flowing to $z_e$.
-
-\paragraph{Commitment Loss.} Because $A_j^{\text{Hyp}} \neq 0$, the commitment gradients from \emph{all} stages now leak backwards to the encoder:
-\begin{equation}
-    \nabla_{z_e} \mathcal{L}_{\text{com}} = (\lambda_{z_e}^c)^2 \sum_{i=1}^N \Big( \prod_{j=1}^{i-1} A_j^{\text{Hyp}} \Big)^{\top} P_{r_{i-1} \to z_e}^c \Big( \tfrac{1}{(\lambda_{r_{i-1}}^c)^2} \nabla_{r_{i-1}} \mathcal{L}_{\text{com}}^{(i)} \Big).
-\end{equation}
-
-\paragraph{Reconstruction Loss.} Similarly, the reconstruction gradient from every stage $q_i$ leaks back to the encoder:
-\begin{equation}
-    \nabla_{z_e} \mathcal{L}_{\text{rec}} = (\lambda_{z_e}^c)^2 \sum_{i=1}^N \Big( \prod_{j=1}^{i-1} A_j^{\text{Hyp}} \Big)^{\top} P_{q_i \to z_e}^c \Big( \tfrac{1}{(\lambda_{q_i}^c)^2} \nabla_{q_i} \mathcal{L}_{\text{rec}} \Big).
-\end{equation}
-While theoretically appealing because the encoder now receives fine-grained feedback, this formulation is numerically disastrous. As $z_e$ approaches the boundary of the Poincar\'e ball, $(\lambda_{z_e}^c)^2 \to \infty$. This conformal amplifier multiplies the stacked leak matrices, leading to severe gradient explosion.
-
-\section{Riemannian HSTE (\texttt{hste\_riemannian})}
-The Riemannian HSTE retains the exact same forward pass and intermediate residual Jacobians ($A_i^{\text{Hyp}} \neq 0$) as the standard HSTE. The crucial difference lies at the final step of backpropagation: by updating the encoder with a Riemannian optimizer, we omit the conversion to Euclidean space, effectively dropping the trailing $(\lambda_{z_e}^c)^2$ factor.
-
-\paragraph{Codebook Loss.} Unchanged ($\nabla^R_{z_e} \mathcal{L}_{\text{cb}} = 0$).
-
-\paragraph{Commitment Loss.} The encoder receives the Riemannian commitment gradient:
-\begin{equation}
-    \nabla^R_{z_e} \mathcal{L}_{\text{com}} = \sum_{i=1}^N \Big( \prod_{j=1}^{i-1} A_j^{\text{Hyp}} \Big)^{\top} P_{r_{i-1} \to z_e}^c \Big( \tfrac{1}{(\lambda_{r_{i-1}}^c)^2} \nabla_{r_{i-1}} \mathcal{L}_{\text{com}}^{(i)} \Big).
-\end{equation}
-
-\paragraph{Reconstruction Loss.} The encoder receives the Riemannian reconstruction gradient:
-\begin{equation}
-    \nabla^R_{z_e} \mathcal{L}_{\text{rec}} = \sum_{i=1}^N \Big( \prod_{j=1}^{i-1} A_j^{\text{Hyp}} \Big)^{\top} P_{q_i \to z_e}^c \Big( \tfrac{1}{(\lambda_{q_i}^c)^2} \nabla_{q_i} \mathcal{L}_{\text{rec}} \Big).
-\end{equation}
-
-\paragraph{Analysis.} In the \texttt{hste\_riemannian} regime, the gradients from deep stages (both reconstruction and commitment) successfully leak back to the encoder. This is a desirable property: it forces the encoder to position $z_e$ such that it is optimally quantized not just by the first coarse codebook, but by the entire hierarchical cascade. Because the explosive $(\lambda_{z_e}^c)^2$ scalar is removed, this leakage remains stable. The rotation matrices within $P^c$ and $A^{\text{Hyp}}$ gently regularize the superposition of these gradients according to the hyperbolic geometry, allowing the encoder to exploit deep, fine-grained structural signals without suffering from the catastrophic numerical instability of the standard HSTE.
+The obvious truncations of the sum do not rescue it. Keeping only the \emph{last} term --- the product of all $A_i$ --- retains precisely the longest, noisiest product, and is therefore the worst choice rather than the best; empirically it is too noisy to train with. Keeping only the \emph{first} term, conversely, discards the leak entirely and returns the single coarsest-code copy $\nabla_{q_1}L_{\text{rec}}$, which is essentially the holistic gradient that the block-level HSTE hop of \S\ref{sec:blockste} already transports to the encoder --- so it contributes nothing new. The useful regime lies strictly between these extremes: some intermediate number of leading terms balances the informative coarse contributions against the noisy fine ones, and the right cutoff is what must be found in order to backpropagate this signal at depth. Identifying that balance --- and, more ambitiously, a numerically stable way to combine the leaked residual signal with the block-level estimator so that the two methods can be used together --- we leave to future work.
 
 \bibliographystyle{plain}
 \bibliography{bibentries}

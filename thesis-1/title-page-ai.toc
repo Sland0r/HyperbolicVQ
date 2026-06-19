@@ -1,0 +1,82 @@
+\babel@toc {english}{}
+\contentsline {chapter}{\numberline {1}Introduction}{1}{chapter.1}%
+\contentsline {chapter}{\numberline {2}Related Work}{3}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Vector Quantization}{3}{section.2.1}%
+\contentsline {section}{\numberline {2.2}Residual Vector Quantization}{3}{section.2.2}%
+\contentsline {section}{\numberline {2.3}Hyperbolic Representation Learning}{4}{section.2.3}%
+\contentsline {chapter}{\numberline {3}Preliminaries}{6}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Vector-Quantized Variational Autoencoders}{6}{section.3.1}%
+\contentsline {paragraph}{The Straight-Through Estimator.}{6}{section*.2}%
+\contentsline {section}{\numberline {3.2}Residual Vector Quantization}{7}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Hyperbolic Geometry}{7}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}The Poincar\'e Ball Model}{7}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Gyrovector Spaces and M\"obius Operations}{8}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}Geodesic Distance}{8}{subsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.3.4}Tangent Spaces and the Exponential and Logarithmic Maps}{8}{subsection.3.3.4}%
+\contentsline {subsection}{\numberline {3.3.5}Parallel Transport}{9}{subsection.3.3.5}%
+\contentsline {subsection}{\numberline {3.3.6}Riemannian Gradients}{9}{subsection.3.3.6}%
+\contentsline {chapter}{\numberline {4}Method}{10}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Hyperbolic Residual Aggregation}{10}{section.4.1}%
+\contentsline {paragraph}{The HRA convention.}{11}{section*.3}%
+\contentsline {paragraph}{Exact telescoping.}{11}{section*.4}%
+\contentsline {paragraph}{The residual mismatch collapses to a pure rotation.}{11}{section*.5}%
+\contentsline {section}{\numberline {4.2}Block-Level Gradient Routing with a Discounted Hyperbolic Straight-Through Estimator}{12}{section.4.2}%
+\contentsline {paragraph}{Discounted Hyperbolic Parallel Transport.}{13}{section*.6}%
+\contentsline {paragraph}{Block-Level Gradient Routing.}{13}{section*.7}%
+\contentsline {chapter}{\numberline {5}Experimental Setup}{15}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Baselines}{15}{section.5.1}%
+\contentsline {paragraph}{Euclidean (baseline).}{15}{section*.8}%
+\contentsline {paragraph}{Naive hyperbolic.}{15}{section*.9}%
+\contentsline {paragraph}{Diagnostic gradient-routing variants.}{15}{section*.10}%
+\contentsline {section}{\numberline {5.2}Tasks and Datasets}{16}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}WordNet Hypernymy Prediction}{16}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Generative Sequential Recommendation}{16}{subsection.5.2.2}%
+\contentsline {subsection}{\numberline {5.2.3}Image Reconstruction and Generation}{16}{subsection.5.2.3}%
+\contentsline {subsection}{\numberline {5.2.4}Neural Audio Coding}{16}{subsection.5.2.4}%
+\contentsline {section}{\numberline {5.3}Model Architectures}{17}{section.5.3}%
+\contentsline {paragraph}{WordNet Hypernymy Prediction.}{17}{section*.11}%
+\contentsline {paragraph}{Generative Sequential Recommendation.}{17}{section*.12}%
+\contentsline {paragraph}{Image Reconstruction and Generation.}{17}{section*.13}%
+\contentsline {paragraph}{Neural Audio Coding.}{17}{section*.14}%
+\contentsline {section}{\numberline {5.4}Training Hyperparameters}{17}{section.5.4}%
+\contentsline {section}{\numberline {5.5}Evaluation Metrics}{18}{section.5.5}%
+\contentsline {paragraph}{WordNet Hypernymy Prediction.}{18}{section*.15}%
+\contentsline {paragraph}{Generative Sequential Recommendation.}{18}{section*.16}%
+\contentsline {paragraph}{Image Reconstruction and Generation.}{18}{section*.17}%
+\contentsline {paragraph}{Neural Audio Coding.}{18}{section*.18}%
+\contentsline {chapter}{\numberline {6}Results}{19}{chapter.6}%
+\contentsline {section}{\numberline {6.1}WordNet Hypernymy Prediction}{19}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Generative Sequential Recommendation}{20}{section.6.2}%
+\contentsline {section}{\numberline {6.3}Image Reconstruction and Generation}{20}{section.6.3}%
+\contentsline {paragraph}{Image Reconstruction.}{20}{section*.19}%
+\contentsline {paragraph}{Hierarchy Recovery.}{21}{section*.20}%
+\contentsline {paragraph}{Image Generation.}{21}{section*.21}%
+\contentsline {section}{\numberline {6.4}Neural Audio Coding}{21}{section.6.4}%
+\contentsline {paragraph}{Experimental Setup.}{21}{section*.22}%
+\contentsline {paragraph}{Boundary Regularization.}{22}{section*.23}%
+\contentsline {paragraph}{Perceptual Quality and Dimensionality.}{22}{section*.24}%
+\contentsline {paragraph}{Rate--Distortion Scaling.}{22}{section*.25}%
+\contentsline {section}{\numberline {6.5}Residual Reconstruction Error Across Tasks}{24}{section.6.5}%
+\contentsline {paragraph}{General Reconstruction Efficacy.}{24}{section*.26}%
+\contentsline {paragraph}{Impact of Curvature-Scaled Radius.}{24}{section*.27}%
+\contentsline {section}{\numberline {6.6}Is the Residual Quantization Signal Useful?}{24}{section.6.6}%
+\contentsline {paragraph}{The leak helps at shallow depth.}{25}{section*.28}%
+\contentsline {paragraph}{Reinstating the signal in GHRQ-VAE.}{25}{section*.29}%
+\contentsline {chapter}{\numberline {7}Ablations}{26}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Effect on the Residual Error}{26}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Effect on Hierarchical Representations}{27}{section.7.2}%
+\contentsline {chapter}{\numberline {8}Conclusions}{28}{chapter.8}%
+\contentsline {chapter}{\numberline {A}Method Motivation Analysis}{29}{appendix.A}%
+\contentsline {section}{\numberline {A.1}Forward failure: non-telescoping residual cascade}{29}{section.A.1}%
+\contentsline {paragraph}{The residual mismatch.}{29}{section*.30}%
+\contentsline {section}{\numberline {A.2}Forward repair: the HRA residual mismatch is a pure rotation}{30}{section.A.2}%
+\contentsline {section}{\numberline {A.3}Backward failures: distorted and cumulative gradient}{30}{section.A.3}%
+\contentsline {subsection}{\numberline {A.3.1}Failure 1: the copied gradient is not geometrically accurate}{30}{subsection.A.3.1}%
+\contentsline {subsection}{\numberline {A.3.2}Failure 2: the firewall leaks, so gradients accumulate}{30}{subsection.A.3.2}%
+\contentsline {paragraph}{The Residual Quantized Variational Autoencoders objective.}{31}{section*.31}%
+\contentsline {paragraph}{The gradient flow.}{31}{section*.32}%
+\contentsline {paragraph}{The Euclidean firewall.}{32}{section*.33}%
+\contentsline {paragraph}{The leak.}{32}{section*.34}%
+\contentsline {paragraph}{Why the naive model still trains.}{33}{section*.35}%
+\contentsline {paragraph}{One backward repair.}{33}{section*.36}%
+\contentsline {section}{\numberline {A.4}Numerically stable gyration in the HSTE backward pass}{33}{section.A.4}%

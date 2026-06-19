@@ -6,17 +6,9 @@ import urllib.request
 from collections import defaultdict
 from torch.utils.data import Dataset
 
-DATASET_DIR = '/home/acolombo/VAEs/dataset/Amazon'
+DATASET_DIR = '/scratch-shared/acolombo/VAEs/dataset/Amazon'
 os.makedirs(DATASET_DIR, exist_ok=True)
 
-REVIEWS_URL = 'http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Beauty_5.json.gz'
-META_URL = 'http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Beauty.json.gz'
-
-REVIEWS_FILE = os.path.join(DATASET_DIR, 'reviews_Beauty_5.json.gz')
-META_FILE = os.path.join(DATASET_DIR, 'meta_Beauty.json.gz')
-
-EMBEDDINGS_FILE = os.path.join(DATASET_DIR, 'beauty_embeddings_mpnet.pt')
-PROCESSED_FILE = os.path.join(DATASET_DIR, 'beauty_processed.pt')
 
 def download_file(url, filepath):
     if not os.path.exists(filepath):
@@ -34,7 +26,14 @@ def parse(path):
         except:
             yield json.loads(l)
 
-def prepare_data(min_history_len=5, seq_len=20):
+def prepare_data(dataset='Beauty', min_history_len=5, seq_len=20):
+    REVIEWS_URL = f'http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_{dataset}_5.json.gz'
+    META_URL = f'http://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_{dataset}.json.gz'
+    REVIEWS_FILE = os.path.join(DATASET_DIR, f'reviews_{dataset}_5.json.gz')
+    META_FILE = os.path.join(DATASET_DIR, f'meta_{dataset}.json.gz')
+    EMBEDDINGS_FILE = os.path.join(DATASET_DIR, f'{dataset.lower()}_embeddings_mpnet.pt')
+    PROCESSED_FILE = os.path.join(DATASET_DIR, f'{dataset.lower()}_processed.pt')
+
     if os.path.exists(PROCESSED_FILE) and os.path.exists(EMBEDDINGS_FILE):
         print(f"Loading processed data from {PROCESSED_FILE}")
         data = torch.load(PROCESSED_FILE)

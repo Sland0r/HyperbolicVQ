@@ -8,3 +8,4 @@ evaluations
 *.sh
 scratch*
 *.json
+.claude_tmp

@@ -203,7 +203,17 @@ class VQVAE2D(nn.Module):
         approx: bool = False,
         hste: bool = False,
         hste_riemannian: bool = False,
+        hste_clip: bool = False,
         gradient_correction: bool = False,
+        block_hste_pt: bool = False,
+        gyration_only: bool = False,
+        A5: bool = False,
+        A4_v2: bool = False,
+        a6: bool = False,
+        a7: bool = False,
+        a6_1: bool = False,
+        a7_1: bool = False,
+        a8: bool = False,
         full_grid: bool = False,
     ):
         super().__init__()
@@ -225,7 +235,17 @@ class VQVAE2D(nn.Module):
             approx=approx,
             hste=hste,
             hste_riemannian=hste_riemannian,
+            hste_clip=hste_clip,
             gradient_correction=gradient_correction,
+            block_hste_pt=block_hste_pt,
+            gyration_only=gyration_only,
+            A5=A5,
+            A4_v2=A4_v2,
+            a6=a6,
+            a7=a7,
+            a6_1=a6_1,
+            a7_1=a7_1,
+            a8=a8,
         )
         self.decoder = Decoder(D=D, out_channels=in_channels, img_size=img_size, size=size, full_grid=full_grid)
         self.exponential_lambda = exponential_lambda

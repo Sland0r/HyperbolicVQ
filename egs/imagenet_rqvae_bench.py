@@ -109,11 +109,15 @@ class PatchDiscriminator(nn.Module):
 
 
 class RQVAE(nn.Module):
-    def __init__(self, n_q=4, bins=16384, dim=256):
+    def __init__(self, n_q=4, bins=16384, dim=256, c=0.0, **rvq_kwargs):
         super().__init__()
         self.encoder = Encoder(z_ch=dim)
         self.decoder = Decoder(z_ch=dim)
-        self.rvq = ResidualVectorQuantizer(dimension=dim, n_q=n_q, bins=bins, c=0.0)
+        # c=0 -> Euclidean RVQ; c>0 -> hyperbolic HRQ. Extra rvq_kwargs select the
+        # quantization variant: vanilla (none) or e.g. the A4 config
+        # (new_method + block_hste_pt + hste_riemannian + gradient_correction).
+        self.rvq = ResidualVectorQuantizer(dimension=dim, n_q=n_q, bins=bins, c=c,
+                                           **rvq_kwargs)
         self.n_q = n_q
 
     def forward(self, x):

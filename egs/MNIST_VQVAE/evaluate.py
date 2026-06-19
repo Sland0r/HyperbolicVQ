@@ -117,6 +117,7 @@ def load_model(args, device):
         solution=getattr(config, "solution", False),
         gyration=getattr(config, "gyration", False),
         full_grid=getattr(config, "full_grid", False),
+        new_method=getattr(config, "new_method", True),
     ).to(device)
 
     print(f"Loading weights from {args.checkpoint}...")

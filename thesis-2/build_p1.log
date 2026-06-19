@@ -1,0 +1,245 @@
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+(./title-page-ai.tex
+LaTeX2e <2020-10-01> patch level 4
+L3 programming layer <2021-02-18>
+(/usr/share/texlive/texmf-dist/tex/latex/base/report.cls
+Document Class: report 2020/04/10 v1.4m Standard LaTeX document class
+(/usr/share/texlive/texmf-dist/tex/latex/base/size12.clo))
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/graphicx.sty
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/keyval.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/graphics.sty
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/trig.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/graphics-cfg/graphics.cfg)
+(/usr/share/texlive/texmf-dist/tex/latex/graphics-def/pdftex.def)))
+(/usr/share/texlive/texmf-dist/tex/latex/graphics/color.sty
+(/usr/share/texlive/texmf-dist/tex/latex/graphics-cfg/color.cfg))
+(/usr/share/texlive/texmf-dist/tex/latex/base/fontenc.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/base/inputenc.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/babel/babel.sty
+(/usr/share/texlive/texmf-dist/tex/generic/babel/babel.def
+(/usr/share/texlive/texmf-dist/tex/generic/babel/txtbabel.def))
+(/usr/share/texlive/texmf-dist/tex/generic/babel-english/english.ldf))
+(/usr/share/texlive/texmf-dist/tex/latex/geometry/geometry.sty
+(/usr/share/texlive/texmf-dist/tex/generic/iftex/ifvtex.sty
+(/usr/share/texlive/texmf-dist/tex/generic/iftex/iftex.sty)))
+(/usr/share/texlive/texmf-dist/tex/latex/amsmath/amsmath.sty
+For additional information on amsmath, use the `?' option.
+(/usr/share/texlive/texmf-dist/tex/latex/amsmath/amstext.sty
+(/usr/share/texlive/texmf-dist/tex/latex/amsmath/amsgen.sty))
+(/usr/share/texlive/texmf-dist/tex/latex/amsmath/amsbsy.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/amsmath/amsopn.sty))
+(/usr/share/texlive/texmf-dist/tex/latex/amsfonts/amssymb.sty
+(/usr/share/texlive/texmf-dist/tex/latex/amsfonts/amsfonts.sty))
+(/usr/share/texlive/texmf-dist/tex/latex/url/url.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/hyperref.sty
+(/usr/share/texlive/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty
+(/usr/share/texlive/texmf-dist/tex/generic/infwarerr/infwarerr.sty))
+(/usr/share/texlive/texmf-dist/tex/generic/kvsetkeys/kvsetkeys.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/pdfescape/pdfescape.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/hycolor/hycolor.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/letltxmacro/letltxmacro.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/auxhook/auxhook.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/kvoptions/kvoptions.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/pd1enc.def)
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/hyperref-langpatches.def)
+(/usr/share/texlive/texmf-dist/tex/generic/intcalc/intcalc.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/etexcmds/etexcmds.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/puenc.def)
+(/usr/share/texlive/texmf-dist/tex/generic/bitset/bitset.sty
+(/usr/share/texlive/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty))
+(/usr/share/texlive/texmf-dist/tex/latex/base/atbegshi-ltx.sty))
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/hpdftex.def
+(/usr/share/texlive/texmf-dist/tex/latex/base/atveryend-ltx.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty
+(/usr/share/texlive/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty)))
+(/home/acolombo/texmf/tex/latex/cleveref/cleveref.sty)
+(/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
+(./title-page-ai.aux)
+(/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
+[Loading MPS to PDF converter (version 2006.09.02).]
+) (/usr/share/texlive/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
+(/usr/share/texlive/texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg))
+*geometry* driver: auto-detecting
+*geometry* detected driver: pdftex
+(/usr/share/texlive/texmf-dist/tex/latex/hyperref/nameref.sty
+(/usr/share/texlive/texmf-dist/tex/latex/refcount/refcount.sty)
+(/usr/share/texlive/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty))
+(./title-page-ai.out) (./title-page-ai.out) [1{/usr/share/texlive/texmf-dist/fo
+nts/map/pdftex/updmap/pdftex.map} <./uvalogo_regular_p_nl-eps-converted-to.pdf>
+] (./title-page-ai.toc
+(/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd)
+(/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd) [1]) [2]pdfTeX warni
+ng (ext4): destination with the same identifier (name{page.i}) has been already
+ used, duplicate ignored
+<to be read again> 
+                   \relax 
+l.180 \end{abstract}
+                     [1]
+Chapter 1.
+pdfTeX warning (ext4): destination with the same identifier (name{page.1}) has 
+been already used, duplicate ignored
+<to be read again> 
+                   \relax 
+l.198 P
+       rior hyperbolic residual quantizers place the codes inside the ball a...
+[1] [2]
+Chapter 2.
+[3] [4] [5]
+Chapter 3.
+[6] [7] [8] [9]
+Chapter 4.
+[10]
+
+LaTeX Warning: No positions in optional float specifier.
+               Default added (so using `tbp') on input line 384.
+
+[11] [12 <./thesis/aggregation.png>] [13]
+Chapter 5.
+(/usr/share/texlive/texmf-dist/tex/latex/base/t1cmtt.fd) [14]
+Overfull \hbox (45.6378pt too wide) in paragraph at lines 459--460
+\T1/cmr/m/n/12 The au-dio eval-u-a-tion em-ploys a SoundStream-style neu-ral co
+dec [[], []] trained on the \T1/cmtt/m/n/12 train-clean-100
+[15]
+Overfull \hbox (3.2368pt too wide) in paragraph at lines 470--471
+ []\T1/cmr/bx/n/12 Recommendation Resid-ual Quan-tized Vari-a-tional Au-toen-co
+ders and Rec-om-mender.[]
+[16]
+Overfull \hbox (17.22945pt too wide) in paragraph at lines 488--489
+\T1/cmr/m/n/12 bet-ter) and In-cep-tion Score (IS, higher is bet-ter), com-pute
+d on $\OT1/cmr/m/n/12 10[]000$ \T1/cmr/m/n/12 sam-ples us-ing \T1/cmtt/m/n/12 t
+orchmetrics\T1/cmr/m/n/12 .
+[17] [18]
+Chapter 6.
+
+LaTeX Warning: Reference `sec:abl_crosstask' on page 19 undefined on input line
+ 510.
+
+
+Overfull \hbox (96.84975pt too wide) in paragraph at lines 516--526
+ [][] 
+[19]
+Overfull \hbox (96.90631pt too wide) in paragraph at lines 535--544
+ [][] 
+
+Overfull \hbox (376.91756pt too wide) in paragraph at lines 555--565
+ [][] 
+[20]
+Overfull \hbox (28.21632pt too wide) in paragraph at lines 581--590
+ [][] 
+
+Overfull \hbox (115.41066pt too wide) in paragraph at lines 596--605
+ [][] 
+
+Overfull \hbox (71.93152pt too wide) in paragraph at lines 611--620
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[21]
+Overfull \hbox (102.71718pt too wide) in paragraph at lines 643--653
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Overfull \hbox (291.1517pt too wide) in paragraph at lines 659--669
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Overfull \hbox (2.40504pt too wide) in paragraph at lines 671--672
+ []\T1/cmr/bx/n/12 The depth pathol-ogy bites, and Geometry-aware Hy-per-bolic 
+Resid-ual Quantization-
+[22]
+Overfull \hbox (8.9716pt too wide) in paragraph at lines 673--674
+\T1/cmr/m/n/12 shows Eu-clidean healthy at ev-ery width while Geometry-aware Hy
+-per-bolic Resid-ual Quantization-
+
+Overfull \hbox (408.69391pt too wide) in paragraph at lines 684--696
+ [][] 
+[23] [24] [25]
+Chapter 7.
+
+Overfull \hbox (18.45259pt too wide) in paragraph at lines 715--716
+\T1/cmr/bx/n/12 Through Es-ti-ma-tor): \T1/cmr/m/n/12 the Hy-per-bolic Resid-ua
+l Ag-gre-ga-tion for-ward or-der-ing (\T1/cmtt/m/n/12 new_method\T1/cmr/m/n/12 
+)
+
+Overfull \hbox (336.62306pt too wide) in paragraph at lines 723--732
+ [][] 
+[26]
+Overfull \hbox (250.25624pt too wide) in paragraph at lines 747--759
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Overfull \hbox (226.58249pt too wide) in paragraph at lines 765--776
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+
+Overfull \hbox (270.06163pt too wide) in paragraph at lines 782--793
+ [][] 
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+[27] [28] [29]
+Chapter 8.
+[30]
+Appendix A.
+[31]
+Appendix B.
+[32] [33] [34 <./thesis/scheme.png>] [35] [36] (./title-page-ai.bbl [37]
+[38] [39]) [40] (./title-page-ai.aux)
+
+LaTeX Warning: There were undefined references.
+
+
+LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+
+ )
+(see the transcript file for additional information)pdfTeX warning (dest): name
+{equation.4.2.7} has been referenced but does not exist, replaced by a fixed on
+e
+
+{/usr/share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc}{/usr/
+share/texlive/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc}</usr/share/t
+exlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbsy10.pfb></usr/share/texliv
+e/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texm
+f-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texmf-dist
+/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts
+/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texlive/texmf-dist/fonts/type1
+/public/amsfonts/cm/cmmi6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public
+/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfon
+ts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/c
+mr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb
+></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/s
+hare/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/t
+exlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/share/texlive/
+texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/share/texlive/texmf-d
+ist/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texlive/texmf-di
+st/fonts/type1/public/cm-super/sfbx1200.pfb></usr/share/texlive/texmf-dist/font
+s/type1/public/cm-super/sfbx1440.pfb></usr/share/texlive/texmf-dist/fonts/type1
+/public/cm-super/sfbx1728.pfb></usr/share/texlive/texmf-dist/fonts/type1/public
+/cm-super/sfbx2488.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-sup
+er/sfcc1440.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfcc
+1728.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfrm0700.pf
+b></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfrm0800.pfb></usr
+/share/texlive/texmf-dist/fonts/type1/public/cm-super/sfrm1000.pfb></usr/share/
+texlive/texmf-dist/fonts/type1/public/cm-super/sfrm1095.pfb></usr/share/texlive
+/texmf-dist/fonts/type1/public/cm-super/sfrm1200.pfb></usr/share/texlive/texmf-
+dist/fonts/type1/public/cm-super/sfrm1440.pfb></usr/share/texlive/texmf-dist/fo
+nts/type1/public/cm-super/sfrm1728.pfb></usr/share/texlive/texmf-dist/fonts/typ
+e1/public/cm-super/sfti1200.pfb></usr/share/texlive/texmf-dist/fonts/type1/publ
+ic/cm-super/sfti1440.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-s
+uper/sftt1000.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/cm-super/sf
+tt1200.pfb>
+Output written on title-page-ai.pdf (44 pages, 917929 bytes).
+Transcript written on title-page-ai.log.
