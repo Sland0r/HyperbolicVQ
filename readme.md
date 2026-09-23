@@ -1,3 +1,5 @@
+https://arxiv.org/abs/2609.26342
+
 # AcademiCodec: An Open Source Audio Codec Model for Academic Research
 
 This repo is organized as follows:
